@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: PostgreSQL
+    # 按照你的要求，去掉了 restart: always 等选项。
+    # 只有当你手动执行 docker-compose up 或者在 Docker Desktop 里点击 Start 时它才会运行。
+    environment:
+      POSTGRES_USER: dataviz_user
+      POSTGRES_PASSWORD: dataviz_password
+      POSTGRES_DB: dataviz_memory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dataviz_user -d dataviz_memory"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  # 声明命名数据卷，保证即使你把容器删了，聊天记忆的数据也还在
+  pgdata:

@@ -1,0 +1,38 @@
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables & secrets (CRITICAL: DO NOT UPLOAD TO GITHUB)
+.env
+.env.*
+!.env.example
+
+# IDE & Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sandbox generated outputs and upload folder data
+data/uploads/*
+!data/uploads/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+
+# Transient planning resolution files
+*.resolved
+*.resolved.*
+
+# Python tooling cache
+.ruff_cache/
+

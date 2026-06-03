@@ -1,0 +1,16 @@
+- `[x]` 1. 解决图表渲染闭环（缺失的 DataViz）
+  - `[x]` 1.1 改造后端沙箱 `sandbox.py`：实现目录快照差异法，捕获生成的图片路径。
+  - `[x]` 1.2 改造后端节点 `agent.py`：将新图片路径封装成带有特殊标记的消息，写入黑板。
+  - `[x]` 1.3 改造 `chat_routes.py` 与前端：将潜伏的图片标记强制推送到流中。
+- `[x]` 2. 解决代码透传与折叠展示（消除黑盒）
+- `[ ]` 3. 解决多用户并发的数据目录隔离
+- `[x]` 4. 历史会话记忆与前端页面美化
+  - `[x]` 4.1 改造后端 `api/chat_routes.py`：增加 `/api/sessions`、`/api/history/{thread_id}` 和 `DELETE /api/history/{thread_id}` 接口。
+  - `[x]` 4.2 改造前端 `web_app.py`：注入极简质感 CSS 并重构侧边栏以支持历史会话列表检索、加载及清除。
+  - `[x]` 4.3 联调验证核心交互链路并记录 Walkthrough。
+- `[ ]` 5. 智能体底层重构与安全加固 (P0)
+  - `[x]` 5.1 修复相对路径地雷：将 `profiler_node` 中的 JSON 读取路径重构为以脚本为基准的物理绝对路径。
+  - `[x]` 5.2 隔离 exec 执行上下文：实现 globals 与 locals 的彻底拆分，避免状态变量残留交叉污染。
+  - `[x]` 5.3 增强 AST 静态防线：限制 `pathlib` 等导入，拦截 `__subclasses__` 等魔法反射。
+  - `[x]` 5.4 并发安全单例构建：实现双重检查锁定 (Double-Checked Locking) 模式，锁住 `get_agent_app()`。
+  - `[x]` 5.5 清理废弃字段：彻底下线 `AgentState` 中的 `chart_path` 僵尸定义。
