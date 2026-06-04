@@ -14,3 +14,8 @@
   - `[x]` 5.3 增强 AST 静态防线：限制 `pathlib` 等导入，拦截 `__subclasses__` 等魔法反射。
   - `[x]` 5.4 并发安全单例构建：实现双重检查锁定 (Double-Checked Locking) 模式，锁住 `get_agent_app()`。
   - `[x]` 5.5 清理废弃字段：彻底下线 `AgentState` 中的 `chart_path` 僵尸定义。
+- `[x]` 6. 记忆体系及意图路由优化（彻底消除多轮对话重复绘图与图表覆盖）
+  - `[x]` 6.1 改造 `coder_node` 提示词：引导 Coder 导入 `uuid` 动态生成唯一图表文件名，防止覆盖历史图表。
+  - `[x]` 6.2 改造 `planner_node` 与 `intent_router`：增加 `question` 追问意图分类，拦截非必需的 Python 代码生成。
+  - `[x]` 6.3 改造 `analyzer_node` 提示词：根据最新意图（`question` vs `analysis`）自适应输出解答或完整的商业分析报告。
+

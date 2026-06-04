@@ -192,23 +192,25 @@ def planner_node(state: AgentState) -> dict:
     user_input = messages[-1].content
 
     prompt = f"""
-    你是一个极其专业的数据分析系统意图规划员。你的任务是分析用户的输入，并将其归类为以下两个单词之一：
+    你是一个极其专业的数据分析系统意图规划员。你的任务是分析用户的输入，并将其归类为以下三个单词之一：
     
-    - greeting: 简单问候（如“你好”、“哈罗”）、日常闲聊、询问你的身份或模型架构（如“你是谁”、“你是什么模型”、“你能做什么”）、或者是和数据分析完全无关的内容。
-    - analysis: 用户明确要求对已上传的数据集进行分析、写Python代码、统计指标、筛选过滤、或进行数据可视化的操作（如“帮我画一个折线图”、“统计各区域销售额”、“计算总利润”）。
+    - greeting: 简单问候（如“你好”、“哈罗”）、日常闲聊、询问你的身份或模型架构（如“你是谁”、“你是什么模型”、“你能做什么”）、或者是和数据分析完全无关的日常对话。
+    - question: 用户针对**已经生成的分析报告、图表内容、编写的 Python 代码进行追问、解释或细节提问**（例如“解释一下第二条建议”、“为什么周末交易量低”、“刚才的代码是什么意思”、“刚才分析的平均值是多少”）。这类请求不需要重新生成新的图表或编写新的 Python 代码。
+    - analysis: 用户明确提出了**新的数据处理、分析、绘图、计算指标、筛选过滤等硬活需求**，需要智能体**编写/生成新的 Python 代码并运行**（例如“帮我画一个折线图”、“统计各区域销售额并生成柱状图”、“清理空值并计算本月总利润”）。
 
     【分类示例】：
     - "你好，你能帮我干嘛？" -> greeting
-    - "你是基于什么架构开发的？" -> greeting
-    - "你是什么模型？" -> greeting
-    - "今天星期几？" -> greeting
-    - "帮我统计下华东区域的销售额" -> analysis
-    - "画一个各区域利润对比柱状图" -> analysis
-    - "计算本月的总销售利润" -> analysis
+    - "你是什么模型开发的？" -> greeting
+    - "为什么周六的数据比周日低这么多？" -> question
+    - "刚才的第一个建议，具体应该怎么优化？" -> question
+    - "刚才画图的 Python 代码是什么原理？" -> question
+    - "帮我重新统计下华东区域的销售额，并画图" -> analysis
+    - "画一个各地区销售量对比饼图" -> analysis
+    - "计算总利润" -> analysis
 
     【当前用户输入】："{user_input}"
 
-    请严格只输出一个英文单词（"greeting" 或 "analysis"），不要有任何标点符号、Markdown 标记或解释废话。
+    请严格只输出一个英文单词（"greeting"、"question" 或 "analysis"），不要有任何标点符号、Markdown 标记或解释废话。
     """
 
     response = flash_llm.invoke([HumanMessage(content=prompt)])
@@ -225,8 +227,8 @@ def intent_router(state: AgentState) -> Literal["analyzer_node", "coder_node"]:
     """根据 Planner 贴的标签，决定把任务分发给谁"""
     last_msg = state["messages"][-1].content
 
-    if "greeting" in last_msg:
-        print("  [Router] 只是闲聊，直接交由分析员回复。")
+    if "greeting" in last_msg or "question" in last_msg:
+        print("  [Router] 只是闲聊或针对历史提问，直接交由分析员回复。")
         return "analyzer_node"
     else:
         print("  [Router] 需要干硬活，叫程序员起来写代码！")
@@ -269,12 +271,13 @@ def coder_node(state: AgentState) -> dict:
        - 处理时间序列时：如果用户请求了按天/月/年等时间维度的分析，必须先使用 `pd.to_datetime` 对时间/日期字段进行转换。
        - 处理缺失值：必须安全地处理可能存在的缺失值 (NaN)，使用 `.fillna()` 填充（例如填 0）、`.dropna()` 丢弃，或选择合适的聚合边界。
     2. **数据可视化标准 (如果涉及绘制图表)**:
-       - 所有生成的图表图片必须**且只能**保存到 `./data/outputs/` 目录下。
+       - 所有生成的图表图片必须保存到 `./data/outputs/` 目录下。为了防止覆盖历史对话中的图表，文件名必须是唯一的，必须导入 `uuid` 模块，并保存为类似 `f"./data/outputs/chart_{{uuid.uuid4().hex[:8]}}.png"` 的随机命名。
        - 为了避免资源浪费和排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
        - 使用 Matplotlib 和 Seaborn 绘图。必须配置如下中文防乱码与审美风格：
          ```python
          import matplotlib.pyplot as plt
          import seaborn as sns
+         import uuid
          plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei'] # 保证 Windows/Linux 下中文正常显示
          plt.rcParams['axes.unicode_minus'] = False  # 保证负号正常显示
          plt.figure(figsize=(10, 6), dpi=150)       # 高清分辨率与默认黄金比例
@@ -379,15 +382,27 @@ def error_router(state: AgentState) -> Literal["coder_node", "analyzer_node"]:
 # 节点 4：智能分析总结员 (Analyzer)
 # ======================================================================
 def analyzer_node(state: AgentState) -> dict:
-    """智能分析总结：拿着沙箱跑出来的数据，给老板写汇报"""
-    print("  [Analyzer] 分析员就位，正在根据数据结果撰写最终洞察报告...")
+    """智能分析总结：拿着沙箱跑出来的数据，给老板写汇报，或直接答疑解惑"""
+    print("  [Analyzer] 分析员就位，正在准备撰写报告或答疑解惑...")
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %A")
-    error=state.get("execution_error","")
-    error_count=state.get("error_count",0)
-    generated_code=state.get("generated_code","")
-    dataframe_columns=state.get("dataframe_columns",[])
-    if error and error_count >=3:
+    error = state.get("execution_error", "")
+    error_count = state.get("error_count", 0)
+    generated_code = state.get("generated_code", "")
+    dataframe_columns = state.get("dataframe_columns", [])
+
+    # 从历史消息中查找最新的内部路由标签，决定回复口吻
+    intent = "analysis"  # 默认值
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, SystemMessage) and "<内部路由标签>" in str(msg.content):
+            content_str = str(msg.content)
+            if "greeting" in content_str:
+                intent = "greeting"
+            elif "question" in content_str:
+                intent = "question"
+            break
+
+    if error and error_count >= 3:
         system_prompt = f"""
      你是一个资深 AI Agent 调试工程师。
     当前数据分析代码已连续执行失败 {error_count} 次，请生成一份面向开发者和用户都能理解的调试报告。
@@ -414,6 +429,18 @@ def analyzer_node(state: AgentState) -> dict:
     - 不要输出业务分析结论。
     - 如果问题很可能来自字段名不匹配，请明确指出“用户问题中的字段”和“数据集中真实字段”可能不一致。
     """
+    elif intent in ["greeting", "question"]:
+        system_prompt = f"""
+    # 角色: 首席商业智能总监 & 首席数据分析师
+    
+    ## 任务目标
+    当前用户提出了一个关于历史已生成数据分析结论、代码或闲聊追问的问题。请结合当前的数据上下文（包括之前编写的代码、沙箱控制台输出及已生成的报告内容），以专业、客观、耐心的口吻直接解答用户的追问。
+    
+    ## 回答规范
+    1. **直奔主题**：不要撰写包含“核心摘要”、“指标与发现”、“建议措施”等格式的完整商业分析报告模板。直接回答用户的问题本身。
+    2. **结合上下文**：充分运用历史对话中的数据百分比、趋势、分析指标与业务语义进行解答。
+    3. **简洁明了**：重点突出，不要重复展示复杂的 Python 代码细节，除非用户明确要求解释代码。
+    """
     else:
         system_prompt = f"""
     # 角色: 首席商业智能总监 & 首席数据分析师
@@ -439,7 +466,7 @@ def analyzer_node(state: AgentState) -> dict:
     messages_to_send = [SystemMessage(content=system_prompt)] + state["messages"]
     response = core_llm.invoke(messages_to_send, config={"tags": ["final_analyzer"]})
 
-    print("  [Analyzer] 报告撰写完毕！流水线竣工！")
+    print("  [Analyzer] 报告撰写与解答完毕！")
 
     return {"messages": [response]}
 
