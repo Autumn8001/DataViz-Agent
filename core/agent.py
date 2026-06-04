@@ -190,7 +190,7 @@ def human_node(state: AgentState) -> dict:
 # ======================================================================
 # 节点 1：前台接待员 (Planner)
 # ======================================================================
-def planner_node(state: AgentState) -> dict:
+async def planner_node(state: AgentState) -> dict:
     """意图规划器：用极低的成本判断用户到底想干嘛"""
     start_time=time.perf_counter()
     messages = state.get("messages", [])
@@ -222,7 +222,7 @@ def planner_node(state: AgentState) -> dict:
     请严格只输出一个英文单词（"greeting"、"question" 或 "analysis"），不要有任何标点符号、Markdown 标记或解释废话。
     """
 
-    response = flash_llm.invoke([HumanMessage(content=prompt)])
+    response = await flash_llm.ainvoke([HumanMessage(content=prompt)])
     intent = response.content.strip().lower()
 
     print(f"  [Planner] 侦测到用户意图: {intent}")
@@ -248,7 +248,7 @@ def intent_router(state: AgentState) -> Literal["analyzer_node", "coder_node"]:
 # ======================================================================
 # 节点 2：代码生成器 (Coder)
 # ======================================================================
-def coder_node(state: AgentState) -> dict:
+async def coder_node(state: AgentState) -> dict:
     """代码生成器：根据用户需求和数据骨架，生成极其纯粹的 Python 代码"""
     start_time = time.perf_counter()
     print("  [Coder] 程序员已就位，准备编写分析代码...")
@@ -285,7 +285,7 @@ def coder_node(state: AgentState) -> dict:
        - 处理缺失值：必须安全地处理可能存在的缺失值 (NaN)，使用 `.fillna()` 填充（例如填 0）、`.dropna()` 丢弃，或选择合适的聚合边界。
     2. **数据可视化标准 (如果涉及绘制图表)**:
        - 所有生成的图表图片必须保存到 `./data/outputs/` 目录下。为了防止覆盖历史对话中的图表，文件名必须是唯一的，必须导入 `uuid` 模块，并保存为类似 `f"./data/outputs/chart_{{uuid.uuid4().hex[:8]}}.png"` 的随机命名。
-       - 为了避免资源浪费和排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
+       - 为了避免资源浪费 and 排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
        - 使用 Matplotlib 和 Seaborn 绘图。必须配置如下中文防乱码与审美风格：
          ```python
          import matplotlib.pyplot as plt
@@ -305,7 +305,7 @@ def coder_node(state: AgentState) -> dict:
     """
 
     messages_to_send = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = core_llm.invoke(messages_to_send)
+    response = await core_llm.ainvoke(messages_to_send)
 
     generated_code = response.content.strip()
 
@@ -400,7 +400,7 @@ def error_router(state: AgentState) -> Literal["coder_node", "analyzer_node"]:
 # ======================================================================
 # 节点 4：智能分析总结员 (Analyzer)
 # ======================================================================
-def analyzer_node(state: AgentState) -> dict:
+async def analyzer_node(state: AgentState) -> dict:
     """智能分析总结：拿着沙箱跑出来的数据，给老板写汇报，或直接答疑解惑"""
     start_time = time.perf_counter()
     print("  [Analyzer] 分析员就位，正在准备撰写报告或答疑解惑...")
@@ -484,7 +484,15 @@ def analyzer_node(state: AgentState) -> dict:
     """
 
     messages_to_send = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = core_llm.invoke(messages_to_send, config={"tags": ["final_analyzer"]})
+    
+    if error and error_count >= 3:
+        response = await core_llm.ainvoke(messages_to_send, config={"tags": ["final_analyzer"]})
+    elif intent in ["greeting", "question"]:
+        # 降级使用极速的 flash_llm 答疑解惑，大幅缩短追问/闲聊响应延迟
+        response = await flash_llm.ainvoke(messages_to_send, config={"tags": ["final_analyzer"]})
+    else:
+        # BI 商业报告生成依旧使用 core_llm 保证报告专业严密
+        response = await core_llm.ainvoke(messages_to_send, config={"tags": ["final_analyzer"]})
 
     print("  [Analyzer] 报告撰写与解答完毕！")
     print(f"  [Timer] analyzer_node 耗时: {time.perf_counter() - start_time:.2f}s")

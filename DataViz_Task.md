@@ -1,21 +1,5 @@
-- `[x]` 1. 解决图表渲染闭环（缺失的 DataViz）
-  - `[x]` 1.1 改造后端沙箱 `sandbox.py`：实现目录快照差异法，捕获生成的图片路径。
-  - `[x]` 1.2 改造后端节点 `agent.py`：将新图片路径封装成带有特殊标记的消息，写入黑板。
-  - `[x]` 1.3 改造 `chat_routes.py` 与前端：将潜伏的图片标记强制推送到流中。
-- `[x]` 2. 解决代码透传与折叠展示（消除黑盒）
-- `[ ]` 3. 解决多用户并发的数据目录隔离
-- `[x]` 4. 历史会话记忆与前端页面美化
-  - `[x]` 4.1 改造后端 `api/chat_routes.py`：增加 `/api/sessions`、`/api/history/{thread_id}` 和 `DELETE /api/history/{thread_id}` 接口。
-  - `[x]` 4.2 改造前端 `web_app.py`：注入极简质感 CSS 并重构侧边栏以支持历史会话列表检索、加载及清除。
-  - `[x]` 4.3 联调验证核心交互链路并记录 Walkthrough。
-- `[ ]` 5. 智能体底层重构与安全加固 (P0)
-  - `[x]` 5.1 修复相对路径地雷：将 `profiler_node` 中的 JSON 读取路径重构为以脚本为基准的物理绝对路径。
-  - `[x]` 5.2 隔离 exec 执行上下文：实现 globals 与 locals 的彻底拆分，避免状态变量残留交叉污染。
-  - `[x]` 5.3 增强 AST 静态防线：限制 `pathlib` 等导入，拦截 `__subclasses__` 等魔法反射。
-  - `[x]` 5.4 并发安全单例构建：实现双重检查锁定 (Double-Checked Locking) 模式，锁住 `get_agent_app()`。
-  - `[x]` 5.5 清理废弃字段：彻底下线 `AgentState` 中的 `chart_path` 僵尸定义。
-- `[x]` 6. 记忆体系及意图路由优化（彻底消除多轮对话重复绘图与图表覆盖）
-  - `[x]` 6.1 改造 `coder_node` 提示词：引导 Coder 导入 `uuid` 动态生成唯一图表文件名，防止覆盖历史图表。
-  - `[x]` 6.2 改造 `planner_node` 与 `intent_router`：增加 `question` 追问意图分类，拦截非必需的 Python 代码生成。
-  - `[x]` 6.3 改造 `analyzer_node` 提示词：根据最新意图（`question` vs `analysis`）自适应输出解答或完整的商业分析报告。
-
+- `[x]` 1. 开启底层流式支持：修改 `core/llm_factory.py` 启用 `streaming=True`
+- `[x]` 2. 重构大模型节点为异步节点：将 `planner_node`、`coder_node`、`analyzer_node` 改为 `async def` 并升级为 `await .ainvoke`
+- `[x]` 3. 实现 `analyzer_node` 模型分流：在 `analyzer_node` 中实现轻量追问/闲聊意图降级调用 `flash_llm`
+- `[x]` 4. 运行本地脚本 `test_agent.py` 与 `test_followup.py` 验证计时与功能正确性
+- `[x]` 5. 手动测试运行 WebApp 确认页面流式传输正常
