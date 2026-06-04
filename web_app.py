@@ -320,9 +320,6 @@ if not st.session_state.messages:
         """
     <div style="text-align:center;padding:120px 0 40px;">
         <h1 style="font-size:2.5rem;font-weight:800;color:#2d2d2d;margin-bottom:12px;letter-spacing:-0.5px;"> DataViz Agent</h1>
-        <p style="font-size:1.05rem;color:#666;max-width:520px;margin:0 auto 24px;line-height:1.6;">
-            支持人在回路（HITL）动态指令修正、黑盒代码自动折叠透明化的多租户数据库记忆分析专家。
-        </p>
     </div>
     """,
         unsafe_allow_html=True,

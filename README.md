@@ -1,4 +1,4 @@
-# 📊 DataViz Agent: 工业级自主数据分析与可视化智能体
+#  DataViz Agent: 工业级自主数据分析与可视化智能体
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -13,17 +13,10 @@ DataViz Agent 是一个专为企业设计、达到工业级标准且具备工程
 
 ---
 
-## 🖥️ 系统界面展示 (Screenshots)
+## 🖥️ 系统界面展示 (Screenshot)
 
-> 💡 *项目上传至 GitHub 后，可在此处放入你截取的前端图片（建议保存在项目根目录的 `./assets/` 目录下）：*
-
-| 📈 主界面与流式可视化分析 | ✋ 人在回路 (HITL) 中断阻断 |
-| :---: | :---: |
-| ![主界面与流式分析](./assets/screenshot_main.png) <br> *支持上传 CSV 数据，一发生成精美图表与打字流报告* | ![人在回路中断拦截](./assets/screenshot_hitl.png) <br> *当探针发现高歧义列名时自动挂起，等待人类纠偏* |
-
-| 💻 黑盒代码折叠透明化展示 |
-| :---: |
-| ![AI自动编写执行代码](./assets/screenshot_code.png) <br> *自动呈现生成的 Python 数据处理和 Matplotlib 绘图代码* |
+![DataViz Agent 运行效果图](./assets/screenshot.png)
+*图：DataViz Agent 运行效果展示（支持 CSV 数据源导入、自动数据探针、双轨 SSE 流式分析及 Matplotlib 高清绘图输出）*
 
 ---
 
