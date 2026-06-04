@@ -5,7 +5,7 @@ import re
 import sys
 import threading
 from typing import Literal
-
+import time
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -39,9 +39,11 @@ core_llm = LLMFactory.get_core_model()  # 核心程序员/总结报告节点
 # ======================================================================
 def profiler_node(state: AgentState) -> dict:
     """数据探针：在一切开始之前，先摸清数据的底细"""
+    start_time=time.perf_counter()
     file_path = state.get("active_file_path")
     # 如果没有文件，或者之前已经探测过了（有了假设），直接放行
     if not file_path or state.get("schema_hypothesis"):
+        print(f"  [Timer] profiler_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"requires_human_approval": False}
 
     print("  [Profiler] 新数据注入！正在启动数据探针进行试探性探索...")
@@ -142,6 +144,7 @@ def profiler_node(state: AgentState) -> dict:
         print(
             f"  [Profiler] 探针探索完毕。发现模糊/歧义字段，是否需要人类确认: {need_human}"
         )
+        print(f"  [Timer] profiler_node 耗时: {time.perf_counter() - start_time:.2f}s")
 
         return {
             "schema_hypothesis": hypothesis,
@@ -153,6 +156,7 @@ def profiler_node(state: AgentState) -> dict:
         }
     except Exception as e:
         print(f"  [Profiler] 探测失败，跳过认知层: {e}")
+        print(f"  [Timer] profiler_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"requires_human_approval": False}
 
 
@@ -172,12 +176,15 @@ def human_node(state: AgentState) -> dict:
     当图冻结被唤醒后执行此节点。
     此时 state["messages"] 已经包含了用户刚刚回复的确认指令。
     """
+    start_time = time.perf_counter()
     old_hypothesis = state.get("schema_hypothesis", "")
     human_feedback = state["messages"][-1].content
     new_hypothesis = old_hypothesis + "\n[人类修正]:" + human_feedback
 
     print("  [HITL] 接收到人类的确认/纠偏指令，警报解除，放行！")
+    print(f"  [Timer] human_node 耗时: {time.perf_counter() - start_time:.2f}s")
     return {"schema_hypothesis": new_hypothesis, "requires_human_approval": False}
+
 
 
 # ======================================================================
@@ -185,8 +192,10 @@ def human_node(state: AgentState) -> dict:
 # ======================================================================
 def planner_node(state: AgentState) -> dict:
     """意图规划器：用极低的成本判断用户到底想干嘛"""
+    start_time=time.perf_counter()
     messages = state.get("messages", [])
     if not messages:
+        print(f"  [Timer] planner_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"messages": []}
 
     user_input = messages[-1].content
@@ -217,6 +226,7 @@ def planner_node(state: AgentState) -> dict:
     intent = response.content.strip().lower()
 
     print(f"  [Planner] 侦测到用户意图: {intent}")
+    print(f"  [Timer] planner_node 耗时: {time.perf_counter() - start_time:.2f}s")
 
     return {
         "messages": [SystemMessage(content=f"<内部路由标签>{intent}</内部路由标签>")]
@@ -240,10 +250,12 @@ def intent_router(state: AgentState) -> Literal["analyzer_node", "coder_node"]:
 # ======================================================================
 def coder_node(state: AgentState) -> dict:
     """代码生成器：根据用户需求和数据骨架，生成极其纯粹的 Python 代码"""
+    start_time = time.perf_counter()
     print("  [Coder] 程序员已就位，准备编写分析代码...")
 
     file_path = state.get("active_file_path")
     if not file_path:
+        print(f"  [Timer] coder_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"messages": [AIMessage(content="对不起，您还没有上传任何数据文件。")]}
 
     try:
@@ -251,6 +263,7 @@ def coder_node(state: AgentState) -> dict:
         columns = df.columns.tolist()
         head_str = df.head(3).to_markdown()
     except Exception as e:
+        print(f"  [Timer] coder_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"messages": [AIMessage(content=f"读取文件失败: {str(e)}")]}
 
     system_prompt = f"""
@@ -300,6 +313,7 @@ def coder_node(state: AgentState) -> dict:
         generated_code = generated_code[9:-3].strip()
 
     print("  [Coder] 代码生成完毕，已写入黑板，等待沙箱执行！")
+    print(f"  [Timer] coder_node 耗时: {time.perf_counter() - start_time:.2f}s")
 
     return {
         "generated_code": generated_code,
@@ -312,12 +326,14 @@ def coder_node(state: AgentState) -> dict:
 # ======================================================================
 def executor_node(state: AgentState) -> dict:
     """执行沙箱节点：把大模型写的代码放进 AST 隔离舱里跑"""
+    start_time = time.perf_counter()
     print("  [Executor] 拿到代码，准备送入 AST 安全沙箱执行...")
 
     code = state.get("generated_code", "")
     error_count = state.get("error_count", 0)
 
     if not code:
+        print(f"  [Timer] executor_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {
             "execution_error": "没有检测到生成的代码",
             "error_count": error_count + 1,
@@ -339,6 +355,7 @@ def executor_node(state: AgentState) -> dict:
                 image_tags.append(f"![Generated Chart]({img_path})")
             print(f"  [Executor] 已捕获生成的新图片: {', '.join(image_paths)}")
 
+        print(f"  [Timer] executor_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {
             "execution_error": "",
             "error_count": 0,
@@ -351,6 +368,7 @@ def executor_node(state: AgentState) -> dict:
         }
     else:
         print(f"  [Executor]  沙箱拦截或代码报错 (当前第 {error_count + 1} 次失败)")
+        print(f"  [Timer] executor_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {
             "execution_error": result["error"],
             "error_count": error_count + 1,
@@ -360,6 +378,7 @@ def executor_node(state: AgentState) -> dict:
                 )
             ],
         }
+
 
 
 def error_router(state: AgentState) -> Literal["coder_node", "analyzer_node"]:
@@ -383,6 +402,7 @@ def error_router(state: AgentState) -> Literal["coder_node", "analyzer_node"]:
 # ======================================================================
 def analyzer_node(state: AgentState) -> dict:
     """智能分析总结：拿着沙箱跑出来的数据，给老板写汇报，或直接答疑解惑"""
+    start_time = time.perf_counter()
     print("  [Analyzer] 分析员就位，正在准备撰写报告或答疑解惑...")
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %A")
@@ -467,6 +487,7 @@ def analyzer_node(state: AgentState) -> dict:
     response = core_llm.invoke(messages_to_send, config={"tags": ["final_analyzer"]})
 
     print("  [Analyzer] 报告撰写与解答完毕！")
+    print(f"  [Timer] analyzer_node 耗时: {time.perf_counter() - start_time:.2f}s")
 
     return {"messages": [response]}
 
@@ -475,7 +496,8 @@ def analyzer_node(state: AgentState) -> dict:
 # 节点 5：垃圾数据清洗员 (Cleaner)
 # ======================================================================
 def cleaner_node(state: AgentState) -> dict:
-    """垃圾清理：清除黑板上多余的系统内部调试/报错调试消息"""
+    """垃圾清理：清除黑板上多余 of 系统内部调试/报错调试消息"""
+    start_time = time.perf_counter()
     messages_to_remove = []
     for msg in state.get("messages", []):
         if isinstance(msg, SystemMessage):
@@ -493,7 +515,9 @@ def cleaner_node(state: AgentState) -> dict:
             f"  [Cleaner] 垃圾车已启动，共清理了 {len(messages_to_remove)} 条内部调试垃圾记录！"
         )
 
+    print(f"  [Timer] cleaner_node 耗时: {time.perf_counter() - start_time:.2f}s")
     return {"messages": messages_to_remove}
+
 
 
 # ======================================================================
