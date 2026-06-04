@@ -1,4 +1,4 @@
-#  DataViz Agent: 工业级自主数据分析与可视化智能体
+#  DataViz Agent: 自主数据分析与可视化智能体
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -7,7 +7,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-DataViz Agent 是一个专为企业设计、达到工业级标准且具备工程化鲁棒性的**自主数据分析与可视化智能体**。
+DataViz Agent 是一个**自主数据分析与可视化智能体**。
 
 不同于传统只懂聊天、抛出零散代码的问答机器人，DataViz Agent 实现了端到端的黑盒闭环能力。系统能在**高度隔离的安全沙箱**中自动编写、运行、纠错、执行 Python 数据分析代码，并将生成的精美商业图表与专业 BI 报告通过 **SSE 协议双轨实时流式**推送给用户。同时，它具备基于 Postgres 数据库的持久化记忆与**人在回路（HITL）**安全阻断机制。
 
