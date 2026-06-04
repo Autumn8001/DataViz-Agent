@@ -161,6 +161,6 @@ streamlit run web_app.py
 - **状态编排**: LangGraph (`langgraph`) - 用于流式状态节点编排及人在回路设计
 - **大模型框架**: LangChain (`langchain-core`, `langchain-openai`)
 - **API 后端**: FastAPI, Uvicorn, Pydantic
-- **前端展示**: Streamlit (提供 Claude 质感的简约设计风格)
+- **前端展示**: Streamlit 
 - **底层数据库**: PostgreSQL (`psycopg-pool`, `psycopg`)
 - **数据分析**: Pandas, Matplotlib, Seaborn, Tabulate
