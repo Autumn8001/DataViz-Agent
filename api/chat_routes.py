@@ -24,9 +24,10 @@ async def chat_endpoint(request: ChatRequest):
     async def event_generator():
         # 1. 组装初始黑板状态
         initial_state = {
-            "messages": [HumanMessage(content=request.message)],
-            "active_file_path": request.file_path,
-        }
+            "messages": [HumanMessage(content=request.message)]}
+
+        if request.file_path:
+            initial_state["active_file_path"] = request.file_path
 
         # 组装记忆卡槽配置
         config = {"configurable": {"thread_id": request.thread_id}}
