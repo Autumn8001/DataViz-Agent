@@ -1,33 +1,35 @@
-# 🚀 性能优化实施方案：冷热模型解耦、异步化与流式推流激活
+# 🚀 性能优化第二阶段实施方案：探针异步降级与 Coder 字段对齐优化
 
-为了解决回复延迟高、用户等待时间长的问题，本项目将针对性地实施以下三个维度的性能优化：
+为了进一步攻克 110 秒的极高耗时瓶颈，本阶段将实施以下两个深度的优化举措：
 
-1. **激活底层流式传输**：在 `LLMFactory` 实例化大模型时开启 `streaming=True`，使前端能够真正感知到“打字机式”的流式输出，消除漫长的空白等待。
-2. **轻量意图模型降级**：在 `analyzer_node` 中，如果用户意图为 `greeting`（闲聊问候）或 `question`（针对已有报告的追问），降级使用高速度、低成本的 `flash_llm`（`glm-4-flash`）进行响应；只有在需要输出复杂 BI 商业报告（`analysis`）或调试错误代码时，才调用旗舰级的 `core_llm`（`glm-4`）。
-3. **节点函数全面异步化**：将状态机中的核心 LLM 调用节点（`planner_node`、`coder_node`、`analyzer_node`）全部重构为 `async def`，并将内部 LLM 调用方式升级为 `await ainvoke(...)`，释放 Python 线程池压力，提升高并发下的响应速度。
+1. **探针节点（`profiler_node`）异步化与分流降级**：
+   - 将 `profiler_node` 从 `def` 重构为 `async def`。
+   - 探针节点的任务是生成字段质量报告与基本的数据概要，这些工作同样不需要动用旗舰级 `core_llm`，我们将底层调用降级为极速、低成本的 `flash_llm` (`glm-4-flash`) 并使用 `await ainvoke`，预期可将该节点的耗时由 **27秒直接压缩至 2~3秒**。
+
+2. **打通“探针-程序员”信息链，提高代码一次生成成功率**：
+   - 目前 `coder_node` 在生成 Python 代码时，只接收了原始列名与前 3 行数据，但**完全没有参考探针生成的 schema 假设**，导致第一次生成时总是因找不到“销售大区”等用户口吻的列名而报 `KeyError` 从而触发了额外的报错重试。
+   - 解决方案：将 `schema_hypothesis`（探针做出的字段语义映射与人类纠正假设）直接注入 `coder_node` 的 System Prompt 中，强约束 Coder 必须参考该假设映射真实字段。这能够**极大地提高代码一次性生成成功率，消灭长达 25+ 秒的自我纠错（Reflexion）重试过程**。
 
 ---
 
 ## 🛠️ 拟修改文件
 
-### 1. `core/llm_factory.py`
-#### [MODIFY] [llm_factory.py](file:///d:/Rag/DataViz_Agent/core/llm_factory.py)
-* 在 `get_flash_model` 和 `get_core_model` 中均添加 `streaming=True` 实例化参数。
-
-### 2. `core/agent.py`
+### 1. `core/agent.py`
 #### [MODIFY] [agent.py](file:///d:/Rag/DataViz_Agent/core/agent.py)
-* **`planner_node`**：重构为 `async def`，使用 `await flash_llm.ainvoke(...)`。
-* **`coder_node`**：重构为 `async def`，使用 `await core_llm.ainvoke(...)`。
-* **`analyzer_node`**：
-  * 重构为 `async def`。
-  * 根据追问意图（`intent`）进行模型分流：若意图为 `greeting` 或 `question`，使用 `response = await flash_llm.ainvoke(...)`；若为 `analysis` 或代码报错，则使用 `response = await core_llm.ainvoke(...)`。
+* **`profiler_node`**：
+  - 重构为 `async def profiler_node(state: AgentState) -> dict:`。
+  - 将大模型调用修改为 `await flash_llm.ainvoke(...)`，实现该节点的并发非阻塞及模型分流降级。
+* **`coder_node`**：
+  - 在参数提取中获取 `schema_hypothesis = state.get("schema_hypothesis", "暂无元数据分析假设。")`。
+  - 在 `system_prompt` 中加入 `- 数据探针分析假设与字段语义映射: {schema_hypothesis}`。
+  - 并在技术执行规范中增加约束，要求 Coder 编写代码时必须严格根据探针语义映射将用户提问字段翻译为数据集真实字段名。
 
 ---
 
 ## 🧪 验证计划
 
-1. **测试脚本验证**：
-   * 运行 `scratch/test_followup.py`，查看在第二轮追问时，`analyzer_node` 的耗时是否从之前的 ~7s 降至 2s 以内。
-   * 运行 `test_agent.py` 确保整体逻辑和图流程依然 100% 正确。
-2. **网页流式测试**：
-   * 启动 Web 服务，在网页端输入需求，验证打字机流式效果是否被真正激活，且追问时的响应速度有显著提升。
+1. **本地脚本验证**：
+   - 运行 `test_agent.py` 验证在故意设坎（“销售大区”列名不直接匹配）的情况下，Coder 能否在第一轮中直接写对代码。
+   - 观察控制台中 `profiler_node` 和 `coder_node` 的耗时是否分别降至毫秒级/秒级，且不再触发第二轮自我纠错。
+2. **网页端再次确认**：
+   - 启动系统在网页端进行完整分析测试，确认端到端响应时间大幅缩短。

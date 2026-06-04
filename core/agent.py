@@ -37,9 +37,10 @@ core_llm = LLMFactory.get_core_model()  # 核心程序员/总结报告节点
 # ======================================================================
 # 节点 0：数据探针与认知层 (Profiler)
 # ======================================================================
-def profiler_node(state: AgentState) -> dict:
+async def profiler_node(state: AgentState) -> dict:
     """数据探针：在一切开始之前，先摸清数据的底细"""
-    start_time=time.perf_counter()
+    import asyncio
+    start_time = time.perf_counter()
     file_path = state.get("active_file_path")
     # 如果没有文件，或者之前已经探测过了（有了假设），直接放行
     if not file_path or state.get("schema_hypothesis"):
@@ -51,12 +52,12 @@ def profiler_node(state: AgentState) -> dict:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".csv":
             try:
-                df = pd.read_csv(file_path, encoding="utf-8-sig")
+                df = await asyncio.to_thread(pd.read_csv, file_path, encoding="utf-8-sig")
             except (UnicodeDecodeError, Exception):
                 print("  [Profiler] utf-8 乱码拦截，正在降级使用 gbk 重新解析...")
-                df = pd.read_csv(file_path, encoding="gb18030")
+                df = await asyncio.to_thread(pd.read_csv, file_path, encoding="gb18030")
         elif suffix in [".xlsx", ".xls"]:
-            df = pd.read_excel(file_path)
+            df = await asyncio.to_thread(pd.read_excel, file_path)
         else:
             # 如果大模型或者用户上传了奇怪的 txt 或 json，主动抛出异常进入下方兜底
             raise ValueError(f"不支持的文件格式: {suffix}")
@@ -66,8 +67,12 @@ def profiler_node(state: AgentState) -> dict:
 
         # RAG 检索企业数据字典
         dict_path = Path(__file__).parent.parent / "data" / "data_dict.json"
-        with open(dict_path, "r", encoding="utf-8") as f:
-            company_dict = json.load(f)
+        
+        def read_json():
+            with open(dict_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+                
+        company_dict = await asyncio.to_thread(read_json)
 
         retrieved_context = []
         for col_name in df.columns:
@@ -113,8 +118,8 @@ def profiler_node(state: AgentState) -> dict:
         - 如果发现高歧义列名（如词典中未包含的缩写）、需要人工确认解析格式的日期列、或关键标识字段缺失率超过 30%，必须输出：`[NEED_HUMAN]`
         - 如果数据格式非常清晰直观，字段语义明确，且数据类型无明显冲突，必须输出：`[SAFE]`
         """
-        # 呼叫旗舰大脑进行认知探索
-        response = core_llm.invoke([HumanMessage(content=prompt)])
+        # 呼叫极速大脑进行轻量元数据探索，实现降级分流提速
+        response = await flash_llm.ainvoke([HumanMessage(content=prompt)])
         raw_content = response.content.strip()
 
         user_summary_match = re.search(
@@ -266,6 +271,8 @@ async def coder_node(state: AgentState) -> dict:
         print(f"  [Timer] coder_node 耗时: {time.perf_counter() - start_time:.2f}s")
         return {"messages": [AIMessage(content=f"读取文件失败: {str(e)}")]}
 
+    schema_hypothesis = state.get("schema_hypothesis", "暂无数据探针语义映射报告。")
+
     system_prompt = f"""
     # 角色: 资深数据科学家 & 首席 Python 工程师
     
@@ -274,6 +281,8 @@ async def coder_node(state: AgentState) -> dict:
     - 可用字段列名: {columns}
     - 数据样例 (前 3 行):
     {head_str}
+    - 数据探针分析假设与字段语义映射:
+    {schema_hypothesis}
 
     ## 任务目标
     生成一段完整、高质量、可直接在生产环境执行的 Python 脚本，以读取数据集，执行用户的数据分析请求，并在生成图表时将其保存为高分辨率的图片。
@@ -283,9 +292,10 @@ async def coder_node(state: AgentState) -> dict:
        - 必须且仅使用 Pandas (`import pandas as pd`) 来加载和处理目标数据集。
        - 处理时间序列时：如果用户请求了按天/月/年等时间维度的分析，必须先使用 `pd.to_datetime` 对时间/日期字段进行转换。
        - 处理缺失值：必须安全地处理可能存在的缺失值 (NaN)，使用 `.fillna()` 填充（例如填 0）、`.dropna()` 丢弃，或选择合适的聚合边界。
+       - **字段映射对齐**：必须结合“数据探针分析假设与字段语义映射”对用户问题中的模糊字段名进行对齐翻译。如果用户请求中提及的字段名与实际字段列名不一致（例如用户问“销售大区”，而探针报告和实际列名显示为“区域”），则在编写代码时必须使用真实的列名（如使用 `df.groupby('区域')`），绝不允许强行使用数据集中不存在的列名。
     2. **数据可视化标准 (如果涉及绘制图表)**:
        - 所有生成的图表图片必须保存到 `./data/outputs/` 目录下。为了防止覆盖历史对话中的图表，文件名必须是唯一的，必须导入 `uuid` 模块，并保存为类似 `f"./data/outputs/chart_{{uuid.uuid4().hex[:8]}}.png"` 的随机命名。
-       - 为了避免资源浪费 and 排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
+       - 为了避免资源浪费和排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
        - 使用 Matplotlib 和 Seaborn 绘图。必须配置如下中文防乱码与审美风格：
          ```python
          import matplotlib.pyplot as plt
