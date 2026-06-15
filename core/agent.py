@@ -1,3 +1,35 @@
+"""LangGraph 状态机核心 - DataViz Agent
+
+本模块实现 DataViz Agent 的核心状态机逻辑，基于 LangGraph 框架。
+
+架构概览：
+    数据探针 (Profiler) → 人在回路 (Human) → 意图规划 (Planner) 
+    → [闲聊回复 / 追问答疑 / 轻量工具 / 代码生成]
+    → 沙箱执行 (Executor) → 分析报告 (Analyzer) → 清理 (Cleaner)
+
+核心特性：
+1. 数据探针：自动分析数据结构，识别歧义字段
+2. 人在回路：当数据存在歧义时，自动触发中断等待人工确认
+3. 意图分类：区分闲聊、追问、轻量查询、分析任务
+4. 自我修复：代码执行失败时，自动重试修复（Reflexion 模式）
+5. 沙箱隔离：在 AST 安全沙箱中执行代码，保障安全
+
+状态机节点说明：
+- profiler_node: 数据探针，分析数据结构和质量
+- human_node: 人在回路拦截器，接收人工确认
+- planner_node: 意图规划器，分类用户请求
+- quick_tool_node: 轻量工具节点，处理字段查看、缺失值统计等
+- coder_node: 代码生成器，根据需求生成 Python 代码
+- executor_node: 沙箱执行器，在隔离环境中执行代码
+- analyzer_node: 分析总结员，生成商业报告或答疑解惑
+- cleaner_node: 垃圾清理员，移除内部调试消息
+
+路由函数说明：
+- profiler_router: 决定是否需要人工确认
+- intent_router: 根据意图分发任务（闲聊/追问/工具/分析）
+- error_router: 决定是否重试修复或进入总结
+"""
+
 import datetime
 import json
 from pathlib import Path
@@ -6,16 +38,19 @@ import sys
 import threading
 from typing import Literal
 import time
+from functools import wraps
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     RemoveMessage,
     SystemMessage,
 )
+from .tools import get_columns, get_missing_summary, preview_rows
 from langgraph.graph import END, START, StateGraph
 import pandas as pd
 
-# 强制标准输出与错误输出为 UTF-8 编码，解决 Windows 终端中文/Emoji 打印导致的 UnicodeEncodeError 闪退
+# 强制标准输出与错误输出为 UTF-8 编码
+# 解决 Windows 终端中文/Emoji 打印导致的 UnicodeEncodeError 闪退
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -30,18 +65,46 @@ from .state import AgentState
 # ======================================================================
 # 1. 实例化核心大模型组件
 # ======================================================================
-flash_llm = LLMFactory.get_flash_model()  # 意图规划/轻量分类节点
-core_llm = LLMFactory.get_core_model()  # 核心程序员/总结报告节点
+# flash_llm: 极速大脑，用于意图规划、轻量分类、追问答疑等低成本任务
+# core_llm: 核心大脑，用于代码生成、商业报告撰写等高质量任务
+flash_llm = LLMFactory.get_flash_model()
+core_llm = LLMFactory.get_core_model()
 
 
 # ======================================================================
 # 节点 0：数据探针与认知层 (Profiler)
 # ======================================================================
 async def profiler_node(state: AgentState) -> dict:
-    """数据探针：在一切开始之前，先摸清数据的底细"""
+    """数据探针节点
+    
+    职责：在分析开始前，探测数据集的结构和质量
+    
+    工作流程：
+    1. 读取用户上传的数据文件（CSV/Excel）
+    2. 提取元数据：字段列表、数据类型、缺失值统计、样例数据
+    3. 从企业数据字典（RAG）检索字段语义
+    4. 调用轻量级 LLM 生成数据质量报告
+    5. 判断是否需要人工确认（高歧义字段、严重缺失等）
+    
+    触发条件：
+    - 有新上传的数据文件
+    - 之前没有生成过数据探针报告（schema_hypothesis 为空）
+    
+    输出：
+    - schema_hypothesis: 数据结构假设和字段语义映射（用于后续代码生成）
+    - user_summary: 面向用户的友好总结
+    - requires_human_approval: 是否需要触发人在回路拦截
+    
+    Args:
+        state: 当前状态机状态
+    
+    Returns:
+        字典包含探针报告和是否需要人工确认的标志
+    """
     import asyncio
     start_time = time.perf_counter()
     file_path = state.get("active_file_path")
+    
     # 如果没有文件，或者之前已经探测过了（有了假设），直接放行
     if not file_path or state.get("schema_hypothesis"):
         print(f"  [Timer] profiler_node 耗时: {time.perf_counter() - start_time:.2f}s")
@@ -166,7 +229,23 @@ async def profiler_node(state: AgentState) -> dict:
 
 
 def profiler_router(state: AgentState) -> Literal["human_node", "planner_node"]:
-    """探针交警：根据是否有歧义，决定是否拦截图流转"""
+    """探针路由函数
+    
+    决策逻辑：
+    - 如果数据存在高歧义或质量问题 → 进入 human_node（触发中断）
+    - 如果数据结构清晰 → 直接进入 planner_node
+    
+    高歧义场景示例：
+    - 未知的缩写字段名（如 tx_dt, qty）
+    - 日期字段格式需要人工确认
+    - 关键标识字段缺失率超过 30%
+    
+    Args:
+        state: 当前状态机状态
+    
+    Returns:
+        下一个节点名称："human_node" 或 "planner_node"
+    """
     if state.get("requires_human_approval"):
         print("  [Router] 数据存在歧义！即将触发中断 (Interrupt)，等待人类介入...")
         return "human_node"
@@ -177,9 +256,30 @@ def profiler_router(state: AgentState) -> Literal["human_node", "planner_node"]:
 # 节点 0.5：人在回路拦截器 (Human Node)
 # ======================================================================
 def human_node(state: AgentState) -> dict:
-    """
-    当图冻结被唤醒后执行此节点。
-    此时 state["messages"] 已经包含了用户刚刚回复的确认指令。
+    """人在回路节点
+    
+    职责：接收人类的确认或纠偏指令
+    
+    触发条件：
+    当 profiler_node 检测到数据歧义或质量问题时，
+    LangGraph 会在此节点前自动暂停（interrupt），等待
+    用户通过前端输入澄清信息。
+    
+    处理逻辑：
+    1. 从 state 中获取用户最新消息（确认/纠偏内容）
+    2. 将用户反馈追加到数据假设中
+    3. 解除警报标志，允许流程继续
+    
+    工作原理：
+    LangGraph 的 interrupt_before=["human_node"] 配置使得图在到达
+    此节点前自动冻结，只有当用户通过 API 继续对话时才会解冻并
+    执行此节点。
+    
+    Args:
+        state: 当前状态机状态（包含用户刚刚回复的消息）
+    
+    Returns:
+        更新后的数据假设和解除的警报标志
     """
     start_time = time.perf_counter()
     old_hypothesis = state.get("schema_hypothesis", "")
@@ -206,12 +306,15 @@ async def planner_node(state: AgentState) -> dict:
     user_input = messages[-1].content
 
     prompt = f"""
-    你是一个极其专业的数据分析系统意图规划员。你的任务是分析用户的输入，并将其归类为以下三个单词之一：
+    你是一个极其专业的数据分析系统意图规划员。你的任务是分析用户的输入，并将其归类为以下四个单词之一：
     
     - greeting: 简单问候（如“你好”、“哈罗”）、日常闲聊、询问你的身份或模型架构（如“你是谁”、“你是什么模型”、“你能做什么”）、或者是和数据分析完全无关的日常对话。
     - question: 用户针对**已经生成的分析报告、图表内容、编写的 Python 代码进行追问、解释或细节提问**（例如“解释一下第二条建议”、“为什么周末交易量低”、“刚才的代码是什么意思”、“刚才分析的平均值是多少”）。这类请求不需要重新生成新的图表或编写新的 Python 代码。
-    - analysis: 用户明确提出了**新的数据处理、分析、绘图、计算指标、筛选过滤等硬活需求**，需要智能体**编写/生成新的 Python 代码并运行**（例如“帮我画一个折线图”、“统计各区域销售额并生成柱状图”、“清理空值并计算本月总利润”）。
-
+    - analysis: 用户明确提出了**新的数据处理、分析、绘图、计算指标、筛选过滤等硬活需求**，需要智能体**编写/生成新的 Python 代码并运行**（例如“帮我画一个折线图”、“统计各区域销售额并生成柱状图”、“清理空值并计算本月总利润”），只要出现画图、图表、可视化、柱状图、折线图、饼图、散点图、趋势图，无论多简单，都必须归为 analysis。
+    - quick_tool: 用户只是请求查看数据集的基础结构或轻量统计信息，例如字段列表、列名、前几行样例、缺失值/空值统计。这类请求不需要生成 Python 代码或绘图，只需要调用内置工具快速读取数据，quick_tool 只能回答字段、列名、前几行、缺失值这些不需要绘图/代码的轻量查看。    
+    【强制优先级规则】：
+    - 只要用户请求中包含“画图”、“图表”、“可视化”、“柱状图”、“折线图”、“饼图”、“散点图”、“趋势图”、“分布图”、“热力图”等绘图需求，无论用户是否说“简单画一下”，都必须分类为 analysis。
+    - quick_tool 只能用于字段列表、列名、前几行预览、缺失值统计等基础数据查看；quick_tool 绝不能生成图表、不能做可视化、不能回答需要绘图的请求。
     【分类示例】：
     - "你好，你能帮我干嘛？" -> greeting
     - "你是什么模型开发的？" -> greeting
@@ -221,10 +324,18 @@ async def planner_node(state: AgentState) -> dict:
     - "帮我重新统计下华东区域的销售额，并画图" -> analysis
     - "画一个各地区销售量对比饼图" -> analysis
     - "计算总利润" -> analysis
+    - "这个表有哪些字段？" -> quick_tool
+    - "每列缺失值多不多？" -> quick_tool
+    - "给我看前 5 行数据" -> quick_tool
+    - "帮我画一个简单的柱状图" -> analysis
+    - "简单可视化一下销售额" -> analysis
+    - "画个图看看趋势" -> analysis
+    - "生成一张销售额折线图" -> analysis
+    
 
     【当前用户输入】："{user_input}"
 
-    请严格只输出一个英文单词（"greeting"、"question" 或 "analysis"），不要有任何标点符号、Markdown 标记或解释废话。
+    请严格只输出一个英文单词（"greeting"、"question" 或 "analysis" 或 "quick_tool"），不要有任何标点符号、Markdown 标记或解释废话。
     """
 
     response = await flash_llm.ainvoke([HumanMessage(content=prompt)])
@@ -237,17 +348,63 @@ async def planner_node(state: AgentState) -> dict:
         "messages": [SystemMessage(content=f"<内部路由标签>{intent}</内部路由标签>")]
     }
 
+def quick_tool_node(state: AgentState) -> dict:
+    """轻量工具节点：处理字段查看、缺失值统计、数据预览等确定性任务"""
+    start_time = time.perf_counter()
+    print("  [QuickTool] 轻量工具节点启动，准备执行确定性数据查询...")
 
-def intent_router(state: AgentState) -> Literal["analyzer_node", "coder_node"]:
+    file_path = state.get("active_file_path")
+    if not file_path:
+        print(f"  [Timer] quick_tool_node 耗时: {time.perf_counter() - start_time:.2f}s")
+        return {"messages": [AIMessage(content="对不起，您还没有上传任何数据文件。")]}
+
+    user_input = state["messages"][-1].content
+
+    try:
+        results = []
+
+        if any(keyword in user_input for keyword in ["字段", "列名", "有哪些列", "columns"]):
+            results.append({"tool": "get_columns", "result": get_columns(file_path)})
+
+        if any(keyword in user_input for keyword in ["缺失", "空值", "null", "nan", "缺失值"]):
+            results.append({"tool": "get_missing_summary", "result": get_missing_summary(file_path)})
+
+        if any(keyword in user_input for keyword in ["前几行", "样例", "预览", "head", "前5行", "前 5 行"]):
+            results.append({"tool": "preview_rows", "result": preview_rows(file_path)})
+
+        if not results:
+            results.append({"tool": "get_columns", "result": get_columns(file_path)})
+
+        tool_report = json.dumps(results, ensure_ascii=False, indent=2)
+
+        print(f"  [QuickTool] 工具执行完成: {[item['tool'] for item in results]}")
+        print(f"  [Timer] quick_tool_node 耗时: {time.perf_counter() - start_time:.2f}s")
+
+        return {
+            "messages": [
+                SystemMessage(content=f"<工具执行结果>\n{tool_report}\n</工具执行结果>")
+            ]
+        }
+
+    except Exception as e:
+        print(f"  [QuickTool] 工具执行失败: {e}")
+        print(f"  [Timer] quick_tool_node 耗时: {time.perf_counter() - start_time:.2f}s")
+        return {"messages": [AIMessage(content=f"轻量数据工具执行失败: {str(e)}")]}
+
+def intent_router(state: AgentState) -> Literal["analyzer_node", "coder_node","quick_tool_node"]:
     """根据 Planner 贴的标签，决定把任务分发给谁"""
     last_msg = state["messages"][-1].content
 
-    if "greeting" in last_msg or "question" in last_msg:
-        print("  [Router] 只是闲聊或针对历史提问，直接交由分析员回复。")
-        return "analyzer_node"
-    else:
+    if "analysis" in last_msg:
         print("  [Router] 需要干硬活，叫程序员起来写代码！")
         return "coder_node"
+
+    if "quick_tool" in last_msg:
+        print("  [Router] 轻量数据查询，交给工具节点快速处理。")
+        return "quick_tool_node"
+
+    print("  [Router] 闲聊或历史追问，直接交由分析员回复。")
+    return "analyzer_node"
 
 
 # ======================================================================
@@ -303,8 +460,14 @@ async def coder_node(state: AgentState) -> dict:
          import uuid
          plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei'] # 保证 Windows/Linux 下中文正常显示
          plt.rcParams['axes.unicode_minus'] = False  # 保证负号正常显示
-         plt.figure(figsize=(10, 6), dpi=150)       # 高清分辨率与默认黄金比例
+         plt.figure(figsize=(6, 4), dpi=150)       # 高清分辨率与默认黄金比例
          sns.set_theme(style="whitegrid", font="SimHei")
+         plt.title("图表标题", fontsize=12, fontweight="bold")
+         plt.xlabel("X轴名称", fontsize=10)
+         plt.ylabel("Y轴名称", fontsize=10)
+         plt.xticks(fontsize=9, rotation=30)
+         plt.yticks(fontsize=9)
+         plt.legend(fontsize=9)
          ```
        - 图表必须包含清晰的标题 (`plt.title()`)、X轴与Y轴标签 (`plt.xlabel()`, `plt.ylabel()`)，并且在 `plt.savefig()` 前调用 `plt.tight_layout()` 以防止图表边缘截断。
        - 绘图完毕后必须调用 `plt.close()` 释放内存。
@@ -430,6 +593,8 @@ async def analyzer_node(state: AgentState) -> dict:
                 intent = "greeting"
             elif "question" in content_str:
                 intent = "question"
+            elif "quick_tool" in content_str:
+                intent = "quick_tool"
             break
 
     if error and error_count >= 3:
@@ -459,7 +624,7 @@ async def analyzer_node(state: AgentState) -> dict:
     - 不要输出业务分析结论。
     - 如果问题很可能来自字段名不匹配，请明确指出“用户问题中的字段”和“数据集中真实字段”可能不一致。
     """
-    elif intent in ["greeting", "question"]:
+    elif intent in ["greeting", "question","quick_tool"]:
         system_prompt = f"""
     # 角色: 首席商业智能总监 & 首席数据分析师
     
@@ -497,7 +662,7 @@ async def analyzer_node(state: AgentState) -> dict:
     
     if error and error_count >= 3:
         response = await core_llm.ainvoke(messages_to_send, config={"tags": ["final_analyzer"]})
-    elif intent in ["greeting", "question"]:
+    elif intent in ["greeting", "question","quick_tool"]:
         # 降级使用极速的 flash_llm 答疑解惑，大幅缩短追问/闲聊响应延迟
         response = await flash_llm.ainvoke(messages_to_send, config={"tags": ["final_analyzer"]})
     else:
@@ -551,10 +716,12 @@ def build_graph():
     builder.add_node("profiler_node", profiler_node)
     builder.add_node("human_node", human_node)
     builder.add_node("planner_node", planner_node)
+    
     builder.add_node("coder_node", coder_node)
     builder.add_node("executor_node", executor_node)
     builder.add_node("analyzer_node", analyzer_node)
     builder.add_node("cleaner_node", cleaner_node)
+    builder.add_node("quick_tool_node", quick_tool_node)
 
     # 2. 构筑连接边关系
     builder.add_edge(START, "profiler_node")
@@ -570,9 +737,9 @@ def build_graph():
     builder.add_conditional_edges(
         "planner_node",
         intent_router,
-        {"analyzer_node": "analyzer_node", "coder_node": "coder_node"},
+        {"analyzer_node": "analyzer_node","quick_tool_node": "quick_tool_node", "coder_node": "coder_node"},
     )
-
+    builder.add_edge("quick_tool_node", "analyzer_node")
     builder.add_edge("coder_node", "executor_node")
 
     builder.add_conditional_edges(

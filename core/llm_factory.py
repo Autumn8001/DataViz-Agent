@@ -15,7 +15,7 @@ class LLMFactory:
         return ChatOpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("BASE_URL"),
-            model="glm-4-flash",  # 智谱最省钱的高速模型
+            model=os.getenv("FLASH_MODEL", "glm-4-flash"),
             temperature=0.0,  # 路由不需要创造力，设为 0 保证绝对的严谨稳定
             streaming=True,  # 开启流式输出底层支持
         )
@@ -26,7 +26,7 @@ class LLMFactory:
         return ChatOpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("BASE_URL"),
-            model="glm-4",  # 或者 glm-4-plus 等高阶推理模型
+            model=os.getenv("CORE_MODEL", "glm-4"),
             temperature=0.2,  # 较低的随机度，确保生成的 Python 代码逻辑严密
             streaming=True,  # 开启流式输出底层支持
         )

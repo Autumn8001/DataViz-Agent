@@ -41,6 +41,32 @@ def render_markdown_with_local_images(content: str) -> str:
         return match.group(0)
 
     return re.sub(pattern, repl, content)
+def render_trace_log(log):
+    """把结构化 trace 日志渲染成用户可读的执行步骤"""
+    if not isinstance(log, dict):
+        st.caption(log)
+        return
+
+    status_label = {
+        "start": "开始",
+        "end": "完成",
+        "error": "异常",
+    }.get(log.get("status"), log.get("status", "日志"))
+    node_label = {
+    "profiler_node": "数据探针",
+    "planner_node": "意图识别",
+    "quick_tool_node": "轻量工具",
+    "coder_node": "代码生成",
+    "executor_node": "沙箱执行",
+    "analyzer_node": "结果总结",
+}.get(log.get("node"), log.get("node", "unknown_node"))
+    message = log.get("message", "")
+    duration = log.get("duration")
+
+    if duration is not None:
+        st.caption(f"{status_label} · {node_label} · {message} · {duration}s")
+    else:
+        st.caption(f"{status_label} · {node_label} · {message}")
 
 
 # ── 1. 缓存 API 请求 ─────────────────────────────────────────────────────────
@@ -74,6 +100,21 @@ footer { visibility: hidden; }
 
 /* ── 极简 Claude 质感背景底色 ── */
 .stApp { background-color: #f5f4ef; }
+    .main { background-color: #f5f4ef; }
+    /* ── 图表尺寸优化 ── */
+    img {
+    max-width: 720px;
+    width: 100%;
+    height: auto;
+    display: block;
+    margin: 12px auto;
+}
+    /* 若需要更大限制可使用 max-width: 800px; */
+
+    /* ── 字体大小优化 ── */
+    h1 { font-size: 2rem; font-weight: 800; color: #2d2d2d; margin-bottom: 12px; letter-spacing: -0.3px; }
+    h2, h3, h4 { font-size: 1.5rem; font-weight: 600; }
+    p, .stMarkdown, .stMarkdown p { font-size: 14px; line-height: 1.6; }
 .main { background-color: #f5f4ef; }
 
 /* ── 侧边栏（Sidebar）美化 ── */
@@ -221,7 +262,9 @@ def load_history(thread_id: str):
     try:
         res = requests.get(f"{API_BASE}/history/{thread_id}", timeout=5)
         if res.status_code == 200:
-            st.session_state.messages = res.json().get("data", [])
+            payload = res.json()
+            st.session_state.messages = payload.get("data", [])
+            st.session_state.file_path = payload.get("active_file_path") or ""
     except Exception:
         st.session_state.messages = []
 
@@ -332,6 +375,11 @@ else:
                 unsafe_allow_html=True,
             )
 
+            if msg["role"] == "assistant" and msg.get("trace_logs"):
+                with st.expander("执行过程", expanded=False):
+                    for log in msg["trace_logs"]:
+                        render_trace_log(log)
+
 # ── 6. 聊天输入与后端双轨推流 ───────────────────────────────────────────────────
 if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."):
     # 4.1 打印用户输入
@@ -343,14 +391,16 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         status_placeholder = st.empty()
+        trace_placeholder = st.empty()
         full_response = ""
+        current_trace_logs = [] 
 
         try:
             response = requests.post(
                 f"{API_BASE}/chat",
                 json={
                     "message": prompt,
-                    "file_path": st.session_state.file_path,
+                    "file_path": st.session_state.file_path or "",
                     "thread_id": st.session_state.thread_id,
                 },
                 stream=True,
@@ -373,6 +423,14 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
                         # 轨道 B: 节点状态播报
                         elif data_json["type"] == "status":
                             status_placeholder.info(data_json["content"])
+                        # 4.2 收集执行日志（给日志扩展面板用）
+                        elif data_json["type"] == "trace":
+                            current_trace_logs.append(data_json["content"])
+
+                            with trace_placeholder.container():
+                                with st.expander("执行过程", expanded=True):
+                                    for log in current_trace_logs:
+                                        render_trace_log(log)
 
                         # 轨道 C: 系统错误反馈
                         elif data_json["type"] == "error":
@@ -389,7 +447,11 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
 
             # 追加到消息列表
             st.session_state.messages.append(
-                {"role": "assistant", "content": full_response}
+                {
+                    "role": "assistant",
+                    "content": full_response,
+                    "trace_logs": current_trace_logs,
+                }
             )
             fetch_sessions.clear()  # 触发会话列表缓存更新，更新左侧列表标题
             st.rerun()

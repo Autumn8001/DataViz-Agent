@@ -35,4 +35,11 @@ data/outputs/*
 
 # Python tooling cache
 .ruff_cache/
+.pytest_cache/
+
+# Personal planning / scratch files (not for GitHub)
+AI_Plan.md
+DataViz_Task.md
+细节.md
+1.png
 

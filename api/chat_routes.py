@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
+import time
 from langchain_core.messages import HumanMessage, AIMessage
 from core.database import get_pool
 from core.agent import get_agent_app
@@ -12,7 +13,7 @@ router = APIRouter()
 # 严格校验前端传过来的数据格式
 class ChatRequest(BaseModel):
     message: str
-    file_path: str = ""  # 如果用户传了文件，这里就会有路径
+    file_path: str | None = ""  # 如果用户传了文件，这里就会有路径
     thread_id: str  # 💡 必须让前端传一个存档号过来，不然怎么找记忆？
 
 
@@ -22,12 +23,14 @@ async def chat_endpoint(request: ChatRequest):
 
     # 核心：造一个“源源不断的产水器”（异步生成器）
     async def event_generator():
+        node_start_times = {}
         # 1. 组装初始黑板状态
+        req_file_path = request.file_path or ""
         initial_state = {
             "messages": [HumanMessage(content=request.message)]}
 
-        if request.file_path:
-            initial_state["active_file_path"] = request.file_path
+        if req_file_path:
+            initial_state["active_file_path"] = req_file_path
 
         # 组装记忆卡槽配置
         config = {"configurable": {"thread_id": request.thread_id}}
@@ -38,6 +41,10 @@ async def chat_endpoint(request: ChatRequest):
 
             # 💡 核心修复：检查图是否在中断状态（比如卡在 human_node 之前）
             state = await agent_app.aget_state(config)
+            if not req_file_path:
+                saved_file_path = state.values.get("active_file_path") or ""
+                if saved_file_path: 
+                    initial_state["active_file_path"] = saved_file_path
             if state.next:
                 # 恢复执行：将当前用户的输入作为人类的指令，更新到 human_node 的输入中
                 await agent_app.aupdate_state(
@@ -47,6 +54,7 @@ async def chat_endpoint(request: ChatRequest):
                     None, config=config, version="v2"
                 )
                 yield f"data: {json.dumps({'type': 'status', 'content': ' 人在回路反馈接收成功，正在恢复运行并修正分析策略...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'trace', 'content': '已接收人类纠偏反馈，正在从中断点恢复执行'})}\n\n"
             else:
                 # 正常全新的运行
                 event_stream = agent_app.astream_events(
@@ -69,17 +77,55 @@ async def chat_endpoint(request: ChatRequest):
 
                 #  双轨推流之【轨道 B】：节点状态流转 (给前端报信，显示绿灯)
                 elif event_type == "on_chain_start":
+                    if node_name:
+                        node_start_times[node_name] = time.perf_counter()
                     # 如果系统进入了咱们定义的四大节点，立刻通知前端！
                     if node_name in [
+                        "profiler_node",
                         "planner_node",
+                        "quick_tool_node",
                         "coder_node",
                         "executor_node",
                         "analyzer_node",
                     ]:
                         yield f"data: {json.dumps({'type': 'status', 'content': f'⚙️ 系统正在执行节点: {node_name} ...'})}\n\n"
+                    trace_text = {
+                        "profiler_node": "正在检查数据结构与字段含义",
+                        "planner_node": "正在识别用户意图并选择处理路径",
+                        "quick_tool_node": "正在调用轻量数据工具",
+                        "coder_node": "正在生成 Python 分析代码",
+                        "executor_node": "正在执行沙箱代码",
+                        "analyzer_node": "正在生成最终回复",
+                    }.get(node_name)
+
+                    if trace_text:
+                        trace_payload = {
+                            "node": node_name,
+                            "status": "start",
+                            "message": trace_text,
+                        }
+                        yield f"data: {json.dumps({'type': 'trace', 'content': trace_payload}, ensure_ascii=False)}\n\n"
 
                 #  隐藏轨道之【轨道 C】：拦截核心节点的关键产物（图片、代码）
                 elif event_type == "on_chain_end":
+                    elapsed = time.perf_counter() - node_start_times.get(node_name, time.perf_counter())
+                    trace_text = {
+                        "profiler_node": "数据探针完成",
+                        "planner_node": "意图识别完成",
+                        "quick_tool_node": "轻量工具调用完成",
+                        "coder_node": "Python 分析代码生成完成",
+                        "executor_node": "沙箱执行完成",
+                        "analyzer_node": "最终回复生成完成",
+                    }.get(node_name)
+
+                    if trace_text:
+                        trace_payload = {
+                            "node": node_name,
+                            "status": "end",
+                            "message": trace_text,
+                            "duration": round(elapsed, 2),
+                        }
+                        yield f"data: {json.dumps({'type': 'trace', 'content': trace_payload}, ensure_ascii=False)}\n\n"
                     # 1. 拦截沙箱生成的图片
                     if node_name == "executor_node":
                         from langchain_core.messages import AIMessage
@@ -228,7 +274,11 @@ async def get_session_history(thread_id: str):
             ):
                 history_list.append({"role": role, "content": content})
 
-        return {"status": "success", "data": history_list}
+        return {
+            "status": "success",
+            "data": history_list,
+            "active_file_path": state.values.get("active_file_path") or "",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
