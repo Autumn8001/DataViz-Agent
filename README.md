@@ -1,4 +1,4 @@
-#  DataViz Agent: 工业级自主数据分析与可视化智能体
+# DataViz Agent 智能数据分析与可视化助手
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -7,9 +7,9 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-DataViz Agent 是一个专为企业设计、达到工业级标准且具备工程化鲁棒性的**自主数据分析与可视化智能体**。
+DataViz Agent 是一个基于 **FastAPI + LangGraph + Pandas + PostgreSQL Checkpointer + Streamlit** 构建的数据分析 Agent，支持用户上传 CSV/Excel 后进行数据探针、意图识别、轻量工具调用、代码生成、AST 沙箱执行、错误重试、图表回传和流式日志展示。
 
-不同于传统只懂聊天、抛出零散代码的问答机器人，DataViz Agent 实现了端到端的黑盒闭环能力。系统能在**高度隔离的安全沙箱**中自动编写、运行、纠错、执行 Python 数据分析代码，并将生成的精美商业图表与专业 BI 报告通过 **SSE 协议双轨实时流式**推送给用户。同时，它具备基于 Postgres 数据库的持久化记忆与**人在回路（HITL）**安全阻断机制。
+这个项目的重点不是替代专业 BI 平台，而是探索“LLM + 工具调用 + 状态机编排”在数据分析场景中的工程化落地。
 
 ---
 
@@ -189,11 +189,16 @@ streamlit run web_app.py
 
 ---
 
-## 🛠️ 技术栈与主要依赖
+## 适用场景与边界
 
-- **状态编排**: LangGraph (`langgraph`) - 用于流式状态节点编排及人在回路设计
-- **大模型框架**: LangChain (`langchain-core`, `langchain-openai`)
-- **API 后端**: FastAPI, Uvicorn, Pydantic
-- **前端展示**: Streamlit (提供 Claude 质感的简约设计风格)
-- **底层数据库**: PostgreSQL (`psycopg-pool`, `psycopg`)
-- **数据分析**: Pandas, Matplotlib, Seaborn, Tabulate
+适合场景：
+
+- CSV/Excel 表格的快速探索、统计和可视化。
+- 演示 LangGraph Agent 工作流、工具调用、人在回路和状态持久化。
+- 学习 LLM 生成代码后的安全检查、执行回传和错误自修复。
+
+当前边界：
+
+- 沙箱是基于 AST 的静态拦截和受限执行，不等价于生产级容器隔离。
+- 图表质量依赖模型生成代码和数据字段质量。
+- 当前前端基于 Streamlit，适合演示和本地使用，不是完整商业 BI 前端。
