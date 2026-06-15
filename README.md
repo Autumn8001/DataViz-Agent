@@ -1,11 +1,13 @@
-# DataViz Agent 智能数据分析与可视化助手
+<h1 align="center">DataViz Agent 智能数据分析与可视化助手</h1>
 
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Agentic-orange)](https://github.com/langchain-ai/langgraph)
-[![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="https://github.com/langchain-ai/langgraph"><img src="https://img.shields.io/badge/LangGraph-Agentic-orange" alt="LangGraph"></a>
+  <a href="https://streamlit.io/"><img src="https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License"></a>
+</p>
 
 DataViz Agent 是一个基于 **FastAPI + LangGraph + Pandas + PostgreSQL Checkpointer + Streamlit** 构建的数据分析 Agent，支持用户上传 CSV/Excel 后进行数据探针、意图识别、轻量工具调用、代码生成、AST 沙箱执行、错误重试、图表回传和流式日志展示。
 
