@@ -53,6 +53,10 @@ app.add_middleware(
 app.include_router(chat_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")  # 预留
 
+from fastapi.staticfiles import StaticFiles
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
+
 
 # 5. 写一个健康检查接口（探针）
 @app.get("/")
@@ -63,4 +67,4 @@ async def root():
 if __name__ == "__main__":
     # 6. 点火启动命令！
     print("🟢 正在拉起 Uvicorn 高性能服务器...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

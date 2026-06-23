@@ -6,7 +6,8 @@ import os
 import base64
 import re
 
-API_BASE = os.environ.get("API_BASE", "http://localhost:8000/api")
+API_BASE = os.environ.get("API_BASE", "http://localhost:8001/api")
+AUTH_API_BASE = "http://localhost:8000/api/v1/auth"
 
 
 def render_markdown_with_local_images(content: str) -> str:
@@ -41,6 +42,8 @@ def render_markdown_with_local_images(content: str) -> str:
         return match.group(0)
 
     return re.sub(pattern, repl, content)
+
+
 def render_trace_log(log):
     """把结构化 trace 日志渲染成用户可读的执行步骤"""
     if not isinstance(log, dict):
@@ -53,13 +56,13 @@ def render_trace_log(log):
         "error": "异常",
     }.get(log.get("status"), log.get("status", "日志"))
     node_label = {
-    "profiler_node": "数据探针",
-    "planner_node": "意图识别",
-    "quick_tool_node": "轻量工具",
-    "coder_node": "代码生成",
-    "executor_node": "沙箱执行",
-    "analyzer_node": "结果总结",
-}.get(log.get("node"), log.get("node", "unknown_node"))
+        "profiler_node": "数据探针",
+        "planner_node": "意图识别",
+        "quick_tool_node": "轻量工具",
+        "coder_node": "代码生成",
+        "executor_node": "沙箱执行",
+        "analyzer_node": "结果总结",
+    }.get(log.get("node"), log.get("node", "unknown_node"))
     message = log.get("message", "")
     duration = log.get("duration")
 
@@ -71,10 +74,13 @@ def render_trace_log(log):
 
 # ── 1. 缓存 API 请求 ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=2)
-def fetch_sessions():
-    """获取所有历史会话列表，缓存在本地以防止频繁闪烁"""
+def fetch_sessions(jwt_token: str | None):
+    """获取该用户的历史会话列表，基于 jwt_token 隔离缓存"""
+    if not jwt_token:
+        return []
     try:
-        res = requests.get(f"{API_BASE}/sessions", timeout=5)
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+        res = requests.get(f"{API_BASE}/sessions", headers=headers, timeout=5)
         if res.status_code == 200:
             return res.json().get("data", [])
     except Exception:
@@ -84,8 +90,8 @@ def fetch_sessions():
 
 # ── 2. Streamlit 页面基础配置及 CSS 注入 ─────────────────────────────────────────
 st.set_page_config(
-    page_title="DataViz Agent",
-    page_icon="",
+    page_title="DataViz Agent 智能分析助理",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -100,22 +106,21 @@ footer { visibility: hidden; }
 
 /* ── 极简 Claude 质感背景底色 ── */
 .stApp { background-color: #f5f4ef; }
-    .main { background-color: #f5f4ef; }
-    /* ── 图表尺寸优化 ── */
-    img {
+.main { background-color: #f5f4ef; }
+
+/* ── 图表尺寸优化 ── */
+img {
     max-width: 720px;
     width: 100%;
     height: auto;
     display: block;
     margin: 12px auto;
 }
-    /* 若需要更大限制可使用 max-width: 800px; */
 
-    /* ── 字体大小优化 ── */
-    h1 { font-size: 2rem; font-weight: 800; color: #2d2d2d; margin-bottom: 12px; letter-spacing: -0.3px; }
-    h2, h3, h4 { font-size: 1.5rem; font-weight: 600; }
-    p, .stMarkdown, .stMarkdown p { font-size: 14px; line-height: 1.6; }
-.main { background-color: #f5f4ef; }
+/* ── 字体大小优化 ── */
+h1 { font-size: 2rem; font-weight: 800; color: #2d2d2d; margin-bottom: 12px; letter-spacing: -0.3px; }
+h2, h3, h4 { font-size: 1.5rem; font-weight: 600; }
+p, .stMarkdown, .stMarkdown p { font-size: 14px; line-height: 1.6; }
 
 /* ── 侧边栏（Sidebar）美化 ── */
 section[data-testid="stSidebar"] {
@@ -143,7 +148,7 @@ section[data-testid="stSidebar"] > div:first-child {
 }
 
 /* ── 输入框美化 ── */
-[data-testid="stTextInput"] input {
+[data-testid="stTextInput"] input, [data-testid="stPasswordInput"] input {
     background: white !important;
     border: 1px solid #e8e8e8 !important;
     border-radius: 8px !important;
@@ -151,12 +156,8 @@ section[data-testid="stSidebar"] > div:first-child {
     color: #333 !important;
     box-shadow: none !important;
 }
-[data-testid="stTextInput"] input:focus {
-    border-color: #ccc !important;
-    box-shadow: none !important;
-}
 
-/* ── 底部聊天输入框扁平化 ── */
+/* ── 底部聊天输入框 ── */
 [data-testid="stChatInput"] {
     background: #efefef !important;
     border-radius: 16px !important;
@@ -184,19 +185,15 @@ section[data-testid="stSidebar"] > div:first-child {
 [data-testid="stChatInput"] button:hover {
     background: #1a1a1a !important;
 }
-[data-testid="stChatInput"] button svg {
-    fill: white !important;
-    color: white !important;
-}
 
-/* ── 隐藏原生消息卡片边框，打造极简流式输出 ── */
+/* ── 隐藏原生消息卡片边框 ── */
 [data-testid="stChatMessage"] {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
 }
 
-/* ── 详细展开/折叠面板 ── */
+/* ── 展开面板 ── */
 [data-testid="stExpander"] {
     background: white !important;
     border: 1px solid #e8e8e8 !important;
@@ -216,15 +213,8 @@ section[data-testid="stSidebar"] > div:first-child {
     border: 1px dashed #ddd;
     padding: 4px;
 }
-[data-testid="stFileUploader"] section {
-    background: transparent !important;
-    border: none !important;
-}
 
-/* ── 分割线 ── */
-hr { border-color: #ebebeb !important; margin: 10px 0 !important; }
-
-/* ── 主阅读区居中宽度 ── */
+/* ── 主阅读区 ── */
 .main .block-container {
     max-width: 860px;
     padding: 2rem 2rem 5rem;
@@ -240,6 +230,17 @@ hr { border-color: #ebebeb !important; margin: 10px 0 !important; }
     text-transform: uppercase;
     margin: 16px 0 8px 2px;
 }
+
+/* ── 认证卡片 ── */
+.auth-container {
+    background-color: white;
+    border-radius: 16px;
+    padding: 40px;
+    border: 1px solid #ebebeb;
+    max-width: 420px;
+    margin: 80px auto 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -247,20 +248,67 @@ hr { border-color: #ebebeb !important; margin: 10px 0 !important; }
 
 # ── 3. Session State 初始化 ──────────────────────────────────────────────────
 defaults = {
-    "thread_id": str(uuid.uuid4()),
+    "thread_id": None,
     "messages": [],
     "file_path": "",
+    "jwt_token": None,
+    "username": None,
+    "tenant_id": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+def get_auth_headers():
+    if st.session_state.jwt_token:
+        return {"Authorization": f"Bearer {st.session_state.jwt_token}"}
+    return {}
+
+# ── 4. 登录认证拦截 (基于 Enterprise RAG 的 SSO 端点) ───────────────────────────
+if not st.session_state.jwt_token:
+    st.markdown("<div style='text-align:center;padding-top:40px;'><h2>📊 欢迎使用 DataViz Agent 数据分析智能体</h2><p style='color:#666;'>请登录您在 RAG 知识库系统注册的账户以激活分析引擎</p></div>", unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns([1, 1.5, 1])
+    with c2:
+        st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align:center;margin-bottom:20px;'>🔐 单点登录 (SSO)</h4>", unsafe_allow_html=True)
+        login_username = st.text_input("用户名", key="login_user")
+        login_password = st.text_input("密码", type="password", key="login_pwd")
+        if st.button("登录分析引擎", use_container_width=True):
+            if not login_username or not login_password:
+                st.error("请输入用户名和密码。")
+            else:
+                try:
+                    # 向统一 RAG 鉴权服务器校验
+                    r = requests.post(
+                        f"{AUTH_API_BASE}/login",
+                        json={"username": login_username, "password": login_password},
+                        timeout=5
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        st.session_state.jwt_token = data["access_token"]
+                        st.session_state.username = data["username"]
+                        st.session_state.tenant_id = data["tenant_id"]
+                        
+                        # 强隔离：会话 thread_id 强制包含 user_{username}_ 前缀，符合安全防御规范
+                        st.session_state.thread_id = f"user_{data['username']}_{uuid.uuid4().hex[:12]}"
+                        st.session_state.messages = []
+                        st.success("引擎接入成功，正在进入控制台...")
+                        st.rerun()
+                    else:
+                        st.error(f"登录失败: {r.json().get('detail', '用户名或密码错误')}")
+                except Exception as e:
+                    st.error(f"无法连接 RAG 统一身份验证服务 (8000 端口): {e}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 
 
 def load_history(thread_id: str):
     """根据 thread_id 向后端抓取聊天记录"""
     st.session_state.thread_id = thread_id
     try:
-        res = requests.get(f"{API_BASE}/history/{thread_id}", timeout=5)
+        res = requests.get(f"{API_BASE}/history/{thread_id}", headers=get_auth_headers(), timeout=5)
         if res.status_code == 200:
             payload = res.json()
             st.session_state.messages = payload.get("data", [])
@@ -269,24 +317,32 @@ def load_history(thread_id: str):
         st.session_state.messages = []
 
 
-# ── 4. 侧边栏布局与会话切换 ──────────────────────────────────────────────────
+# ── 5. 侧边栏布局与会话切换 ──────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
-        """
+        f"""
     <div style="display:flex;align-items:center;gap:10px;padding-bottom:16px;border-bottom:1px solid #f0f0f0;">
         <div style="width:28px;height:28px;background:linear-gradient(135deg,#ff8008,#ffc837);border-radius:50%;flex-shrink:0;"></div>
         <div>
-            <div style="font-size:13px;font-weight:700;color:#1a1a1a;">DataViz Agent</div>
-            <div style="font-size:11px;color:#666;"></div>
+            <div style="font-size:13px;font-weight:700;color:#1a1a1a;">已登录：{st.session_state.username}</div>
+            <div style="font-size:11px;color:#666;">DataViz 分析控制台</div>
         </div>
     </div>
     """,
         unsafe_allow_html=True,
     )
 
-    # 按钮 + 新对话
+    if st.button("🚪 退出分析控制台", use_container_width=True):
+        st.session_state.jwt_token = None
+        st.session_state.username = None
+        st.session_state.tenant_id = None
+        st.session_state.thread_id = None
+        st.session_state.messages = []
+        st.rerun()
+
+    # 新会话也需要严格加上 user_{user_id}_ 的安全前缀
     if st.button("+ 新对话", use_container_width=True):
-        st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.thread_id = f"user_{st.session_state.username}_{uuid.uuid4().hex[:12]}"
         st.session_state.messages = []
         st.session_state.file_path = ""
         st.rerun()
@@ -301,7 +357,7 @@ with st.sidebar:
     )
 
     # 列表展示
-    sessions = fetch_sessions()
+    sessions = fetch_sessions(st.session_state.jwt_token)
     if search_query:
         sessions = [
             s for s in sessions if search_query.lower() in s.get("title", "").lower()
@@ -315,7 +371,7 @@ with st.sidebar:
             is_active = s["session_id"] == st.session_state.thread_id
             btn_label = f"💬 {title}"
             if is_active:
-                btn_label = f" {title} (当前)"
+                btn_label = f"📝 {title} (当前)"
 
             if st.button(btn_label, key=s["session_id"], use_container_width=True):
                 load_history(s["session_id"])
@@ -326,43 +382,58 @@ with st.sidebar:
     # 管理选项
     with st.expander("🛠️ 管理选项"):
         st.markdown(
-            '<div class="sidebar-label">CSV 数据源</div>', unsafe_allow_html=True
+            '<div class="sidebar-label">隔离 CSV 数据源</div>', unsafe_allow_html=True
         )
         uploaded_file = st.file_uploader(
-            "上传你要分析的 CSV 数据", type=["csv"], label_visibility="collapsed"
+            "上传你要分析的 CSV 数据", type=["csv", "xlsx", "xls"], label_visibility="collapsed"
         )
-        if uploaded_file is not None:
-            os.makedirs("data/uploads", exist_ok=True)
-            st.session_state.file_path = f"data/uploads/{uploaded_file.name}"
-            with open(st.session_state.file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            st.success(f"已就绪: {uploaded_file.name}")
+        if uploaded_file is not None and st.button("上传文件入沙箱", use_container_width=True):
+            with st.spinner("正在安全隔离上传..."):
+                try:
+                    files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
+                    r = requests.post(
+                        f"{API_BASE}/upload",
+                        files=files,
+                        headers=get_auth_headers(),
+                        timeout=30
+                    )
+                    if r.status_code == 200:
+                        result = r.json()
+                        st.session_state.file_path = result["file_path"]
+                        st.success(f"已就绪: {uploaded_file.name}")
+                    else:
+                        st.error(f"上传失败: {r.status_code}")
+                except Exception as e:
+                    st.error(f"网络异常: {e}")
         elif st.session_state.file_path:
             st.caption(f"当前数据: {os.path.basename(st.session_state.file_path)}")
 
         st.divider()
-        st.markdown('<div class="sidebar-label">会话清理</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-label">会话物理清理</div>', unsafe_allow_html=True)
 
         if st.button("🗑️ 删除当前会话", use_container_width=True):
             try:
                 requests.delete(
-                    f"{API_BASE}/history/{st.session_state.thread_id}", timeout=5
+                    f"{API_BASE}/history/{st.session_state.thread_id}",
+                    headers=get_auth_headers(),
+                    timeout=5
                 )
-                st.session_state.thread_id = str(uuid.uuid4())
+                st.session_state.thread_id = f"user_{st.session_state.username}_{uuid.uuid4().hex[:12]}"
                 st.session_state.messages = []
                 st.session_state.file_path = ""
-                fetch_sessions.clear()  # 物理清除本地 st 缓存
+                fetch_sessions.clear()  # 清除 Streamlit 本地数据缓存
                 st.success("会话已成功删除")
                 st.rerun()
             except Exception as e:
                 st.error(f"删除失败: {e}")
 
-# ── 5. 主区域内容展示 ──────────────────────────────────────────────────────────
+# ── 6. 主区域内容展示 ──────────────────────────────────────────────────────────
 if not st.session_state.messages:
     st.markdown(
-        """
+        f"""
     <div style="text-align:center;padding:120px 0 40px;">
-        <h1 style="font-size:2.5rem;font-weight:800;color:#2d2d2d;margin-bottom:12px;letter-spacing:-0.5px;"> DataViz Agent</h1>
+        <h1 style="font-size:2.5rem;font-weight:800;color:#2d2d2d;margin-bottom:12px;letter-spacing:-0.5px;">📊 DataViz Agent</h1>
+        <p style="color:#666;font-size:14px;">已启用 <span style="font-family:monospace;color:#f57c00;font-weight:600;">{st.session_state.username}</span> 专属沙箱环境，物理输出完全隔离防泄露</p>
     </div>
     """,
         unsafe_allow_html=True,
@@ -380,20 +451,19 @@ else:
                     for log in msg["trace_logs"]:
                         render_trace_log(log)
 
-# ── 6. 聊天输入与后端双轨推流 ───────────────────────────────────────────────────
+# ── 7. 聊天输入与后端双轨推流 ───────────────────────────────────────────────────
 if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."):
-    # 4.1 打印用户输入
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 4.2 SSE 接收
+    # SSE 接收
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         status_placeholder = st.empty()
         trace_placeholder = st.empty()
         full_response = ""
-        current_trace_logs = [] 
+        current_trace_logs = []
 
         try:
             response = requests.post(
@@ -403,6 +473,7 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
                     "file_path": st.session_state.file_path or "",
                     "thread_id": st.session_state.thread_id,
                 },
+                headers=get_auth_headers(),
                 stream=True,
             )
 
@@ -423,7 +494,8 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
                         # 轨道 B: 节点状态播报
                         elif data_json["type"] == "status":
                             status_placeholder.info(data_json["content"])
-                        # 4.2 收集执行日志（给日志扩展面板用）
+                        
+                        # 轨道 C: 执行过程日志
                         elif data_json["type"] == "trace":
                             current_trace_logs.append(data_json["content"])
 
@@ -432,7 +504,7 @@ if prompt := st.chat_input("请输入你的数据分析需求或纠偏反馈..."
                                     for log in current_trace_logs:
                                         render_trace_log(log)
 
-                        # 轨道 C: 系统错误反馈
+                        # 轨道 D: 系统错误反馈
                         elif data_json["type"] == "error":
                             st.error(data_json["content"])
 

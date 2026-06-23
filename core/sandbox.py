@@ -253,14 +253,23 @@ def run_in_sandbox(
 
         setup_theme()
 
-        # 0.2 【快照原理】：记录运行前目录中所有文件的最后修改时间
-        # 通过对比执行前后的文件时间戳，精确识别新生成的图表
+        # 0.2 【快照原理】：递归记录运行前目录中所有文件（含子目录）的最后修改时间
         output_dir = config.paths.outputs_dir
         os.makedirs(output_dir, exist_ok=True)
-        before_mtimes = {
-            f: os.path.getmtime(os.path.join(output_dir, f))
-            for f in os.listdir(output_dir)
-        }
+        
+        def get_all_files_mtimes(base_dir: str):
+            mtimes = {}
+            for root, _, files in os.walk(base_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, base_dir).replace("\\", "/")
+                    try:
+                        mtimes[rel_path] = os.path.getmtime(full_path)
+                    except OSError:
+                        pass
+            return mtimes
+
+        before_mtimes = get_all_files_mtimes(output_dir)
 
         # 1. 静态解析：把代码字符串解析为抽象语法树（AST）
         # AST 是代码的树状结构表示，便于静态分析
@@ -283,12 +292,10 @@ def run_in_sandbox(
             local_context = {}
             exec(compiled_code, global_context, local_context)
 
-        # 5. 【快照原理】：对比运行后的文件修改时间，找出新增或被覆盖的文件
-        # 如果文件是新出现的，或者修改时间比执行前更新，说明是代码刚生成的
-        after_files = os.listdir(output_dir)
+        # 5. 【快照原理】：对比运行后的文件修改时间，找出新增或被覆盖的文件（支持递归子目录）
+        after_mtimes = get_all_files_mtimes(output_dir)
         new_files = []
-        for f in after_files:
-            mtime = os.path.getmtime(os.path.join(output_dir, f))
+        for f, mtime in after_mtimes.items():
             # 文件不存在于快照中（新创建）或修改时间更新（被覆盖）
             if f not in before_mtimes or mtime > before_mtimes[f]:
                 new_files.append(f)

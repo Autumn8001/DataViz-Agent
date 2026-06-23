@@ -1,23 +1,23 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from core.auth import get_current_user
 
 router = APIRouter()
 
-# 明确规定咱们的文件存放重镇
-UPLOAD_DIR = "data/uploads"
-
-# 确保文件夹存在（防止手滑删了报错）
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-#  架构师的安全红线：白名单机制
+# 架构师的安全红线：白名单机制
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """接收前端上传的数据文件，并安全持久化到本地磁盘"""
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """接收前端上传的数据文件，并按用户 user_id 安全地在物理上进行隔离持久化"""
+
+    user_id = current_user["user_id"]
 
     # 1. 提取文件后缀名，并转为小写
     file_ext = os.path.splitext(file.filename)[1].lower()
@@ -29,12 +29,15 @@ async def upload_file(file: UploadFile = File(...)):
             detail=f"安全拦截：不支持的文件类型 '{file_ext}'。只允许上传 CSV 或 Excel！",
         )
 
-    # 3. 解决高并发痛点：使用 UUID 生成绝对唯一的文件名
-    # 如果两个人都上传了 data.csv，不改名字的话后一个会把前一个覆盖掉！
-    unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    # 3. 动态物理隔离用户上传文件夹
+    user_upload_dir = f"data/uploads/{user_id}"
+    os.makedirs(user_upload_dir, exist_ok=True)
 
-    # 4. 把文件按块（Chunk）写入磁盘，防止大文件撑爆内存
+    # 4. 解决高并发与覆盖冲突痛点：使用 UUID 生成绝对唯一的文件名
+    unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+    file_path = os.path.join(user_upload_dir, unique_filename)
+
+    # 5. 把文件按块（Chunk）写入磁盘，防止大文件撑爆内存
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -44,12 +47,11 @@ async def upload_file(file: UploadFile = File(...)):
         # 无论成功失败，一定要关闭上传流，释放资源
         await file.close()
 
-    print(f"📦 [Upload] 接收文件成功！已保存至: {file_path}")
+    print(f"📦 [Upload] 用户 {user_id} 接收文件成功！已物理隔离保存至: {file_path}")
 
-    # 5. 把保存好的物理路径返回给前端
-    # 前端拿着这个路径，待会儿请求 /chat 接口的时候再传给咱们！
+    # 6. 把保存好的物理路径返回给前端
     return {
         "message": "上传成功",
         "original_name": file.filename,
-        "file_path": file_path,  #  这个极其重要！这是文件的“取件码”
+        "file_path": file_path,  # 这是文件的“取件码”
     }

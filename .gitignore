@@ -24,10 +24,7 @@ ENV/
 *.swo
 
 # Sandbox generated outputs and upload folder data
-data/uploads/*
-!data/uploads/.gitkeep
-data/outputs/*
-!data/outputs/.gitkeep
+data/
 
 # Transient planning resolution files
 *.resolved

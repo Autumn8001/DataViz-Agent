@@ -1,11 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import time
+import os
 from langchain_core.messages import HumanMessage, AIMessage
 from core.database import get_pool
 from core.agent import get_agent_app
+from core.auth import get_current_user
 
 router = APIRouter()
 
@@ -18,37 +20,98 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    """接收前端对话请求，并返回 SSE 流式推流响应"""
+async def chat_endpoint(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """接收前端对话请求，并返回 SSE 流式推流响应（注入 JWT 用户和 thread_id 隔离）"""
+    
+    user_id = current_user["user_id"]
+    tenant_id = current_user.get("tenant_id", "default")
+    thread_id = request.thread_id
+    
+    # 🛡️ 安全硬隔离：基于 agent_sessions 关系表的多租户越权审计
+    pool = get_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM agent_sessions WHERE thread_id = %s", (thread_id,))
+            row = cur.fetchone()
+            if row:
+                # 存在会话记录，强行核实是否属于当前用户
+                if row[0] != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="权限拒绝：当前的 thread_id 并不属于您，越权已被拦截。"
+                    )
+            else:
+                # 全新会话，前置命名协议校验并自动写入关系表
+                if not thread_id.startswith(f"user_{user_id}_"):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="权限拒绝：新会话 thread_id 必须以所属 user_id 为前缀。"
+                    )
+                # 插入绑定关系记录
+                msg_snippet = request.message[:30] if request.message else "新分析对话"
+                cur.execute(
+                    "INSERT INTO agent_sessions (thread_id, user_id, tenant_id, title) VALUES (%s, %s, %s, %s) ON CONFLICT (thread_id) DO NOTHING",
+                    (thread_id, user_id, tenant_id, msg_snippet)
+                )
+
+    # 🛡️ 物理路径防穿越校验 (使用 Path.resolve() 绝对路径与 is_relative_to 安全防线)
+    req_file_path = request.file_path or ""
+    if req_file_path:
+        from pathlib import Path
+        try:
+            # 绝对化基准 uploads 隔离目录和目标物理文件路径，杜绝 ../ 物理回溯
+            base_uploads_dir = Path("data/uploads").resolve()
+            user_uploads_dir = (base_uploads_dir / str(user_id)).resolve()
+            target_path = Path(req_file_path).resolve()
+            
+            # 校验 target_path 必须落在该用户的 uploads 隔离子目录下
+            if not target_path.is_relative_to(user_uploads_dir):
+                raise HTTPException(
+                    status_code=403,
+                    detail="权限拒绝：文件路径越权访问拦截。"
+                )
+        except Exception:
+            raise HTTPException(
+                status_code=403,
+                detail="权限拒绝：文件路径非法或越权访问拦截。"
+            )
 
     # 核心：造一个“源源不断的产水器”（异步生成器）
     async def event_generator():
         node_start_times = {}
         # 1. 组装初始黑板状态
-        req_file_path = request.file_path or ""
         initial_state = {
-            "messages": [HumanMessage(content=request.message)]}
+            "messages": [HumanMessage(content=request.message)],
+            "user_id": user_id
+        }
 
         if req_file_path:
             initial_state["active_file_path"] = req_file_path
 
         # 组装记忆卡槽配置
-        config = {"configurable": {"thread_id": request.thread_id}}
+        config = {"configurable": {"thread_id": thread_id}}
 
         try:
             # 动态获取已处于运行 asyncio 循环内的 agent_app 实例
             agent_app = get_agent_app()
 
-            # 💡 核心修复：检查图是否在中断状态（比如卡在 human_node 之前）
+            # 💡 检查图是否在中断状态（比如卡在 human_node 之前）
             state = await agent_app.aget_state(config)
             if not req_file_path:
                 saved_file_path = state.values.get("active_file_path") or ""
                 if saved_file_path: 
                     initial_state["active_file_path"] = saved_file_path
+            
             if state.next:
                 # 恢复执行：将当前用户的输入作为人类的指令，更新到 human_node 的输入中
                 await agent_app.aupdate_state(
-                    config, {"messages": [HumanMessage(content=request.message)]}
+                    config, {
+                        "messages": [HumanMessage(content=request.message)],
+                        "user_id": user_id
+                    }
                 )
                 event_stream = agent_app.astream_events(
                     None, config=config, version="v2"
@@ -68,18 +131,16 @@ async def chat_endpoint(request: ChatRequest):
 
                 #  双轨推流之【轨道 A】：大模型正在疯狂吐字 (Token级推流)
                 if event_type == "on_chat_model_stream":
-                    # 只允许带有 "final_analyzer" 标签的模型输出，拦截掉 Coder 的 Python 代码（含有 # 注释），避免前端 UI 布局崩塌成巨大标题！
+                    # 只允许带有 "final_analyzer" 标签的模型输出，拦截掉 Coder 的 Python 代码
                     if "final_analyzer" in event.get("tags", []):
                         chunk = event["data"]["chunk"]
                         if chunk.content:
-                            # 必须严格遵守 SSE 协议格式：以 data: 开头，以 \n\n 结尾！
                             yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
 
-                #  双轨推流之【轨道 B】：节点状态流转 (给前端报信，显示绿灯)
+                #  双轨推流之【轨道 B】：节点状态流转
                 elif event_type == "on_chain_start":
                     if node_name:
                         node_start_times[node_name] = time.perf_counter()
-                    # 如果系统进入了咱们定义的四大节点，立刻通知前端！
                     if node_name in [
                         "profiler_node",
                         "planner_node",
@@ -106,7 +167,7 @@ async def chat_endpoint(request: ChatRequest):
                         }
                         yield f"data: {json.dumps({'type': 'trace', 'content': trace_payload}, ensure_ascii=False)}\n\n"
 
-                #  隐藏轨道之【轨道 C】：拦截核心节点的关键产物（图片、代码）
+                #  隐藏轨道之【轨道 C】：拦截关键产物
                 elif event_type == "on_chain_end":
                     elapsed = time.perf_counter() - node_start_times.get(node_name, time.perf_counter())
                     trace_text = {
@@ -126,38 +187,25 @@ async def chat_endpoint(request: ChatRequest):
                             "duration": round(elapsed, 2),
                         }
                         yield f"data: {json.dumps({'type': 'trace', 'content': trace_payload}, ensure_ascii=False)}\n\n"
-                    # 1. 拦截沙箱生成的图片
+                    
                     if node_name == "executor_node":
-                        from langchain_core.messages import AIMessage
-
                         output_dict = event["data"].get("output", {})
                         if isinstance(output_dict, dict) and "messages" in output_dict:
                             for msg in output_dict["messages"]:
-                                # 如果找到了我们强行塞进去的图片暗号，伪装成 Token 强制推给前端！
-                                if isinstance(msg, AIMessage) and "![" in str(
-                                    msg.content
-                                ):
+                                if isinstance(msg, AIMessage) and "![" in str(msg.content):
                                     yield f"data: {json.dumps({'type': 'token', 'content': f'\n\n{msg.content}\n\n'})}\n\n"
 
                     elif node_name == "coder_node":
                         output_dict = event["data"].get("output", {})
-                        if (
-                            isinstance(output_dict, dict)
-                            and "generated_code" in output_dict
-                        ):
+                        if isinstance(output_dict, dict) and "generated_code" in output_dict:
                             code = output_dict["generated_code"]
                             if code:
                                 code_markdown = f"\n\n** 💻 AI 编写的分析代码 (点击展开查看)：**\n<details>\n<summary>点击展开/折叠查看 Python 分析代码</summary>\n\n```python\n{code}\n```\n</details>\n\n"
                                 yield f"data: {json.dumps({'type': 'token', 'content': code_markdown})}\n\n"
 
-
-                    # 3. 拦截数据探针生成的探针报告并分发给前端，让用户掌握数据底细
                     elif node_name == "profiler_node":
                         output_dict = event["data"].get("output", {})
-                        if (
-                            isinstance(output_dict, dict)
-                            and "user_summary" in output_dict
-                        ):
+                        if isinstance(output_dict, dict) and "user_summary" in output_dict:
                             user_summary = output_dict["user_summary"]
                             if user_summary:
                                 report_markdown = f"\n\n🔍 **【数据探针检测报告】**\n\n{user_summary}\n\n"
@@ -166,74 +214,46 @@ async def chat_endpoint(request: ChatRequest):
             # 💡 运行结束后，再次检查是否卡在 human_node 之前（即被中断了）
             final_state = await agent_app.aget_state(config)
             if final_state.next and "human_node" in final_state.next:
-                # 作为一个特殊的消息 Token 发送给前端，从而永久保留在聊天记录中！
                 interrupt_msg = "\n\n️ **[人在回路中断拦截]**\n数据探针检测到数据中存在模糊字段或大面积缺失。系统已自动挂起拦截。\n👉 **请在下方输入框中提供指导纠偏指令（如：指定某列是日期列，或者如何处理缺失值），然后发送。系统将自动恢复运行。**"
                 yield f"data: {json.dumps({'type': 'token', 'content': interrupt_msg})}\n\n"
 
         except Exception as e:
-            # 如果系统崩溃，优雅地把报错推给前端，并打印堆栈到控制台！
             import traceback
-
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'content': f'服务器内部错误: {str(e)}'})}\n\n"
 
-        # 3. 水流干了，发送结束信号让前端挂断电话
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-    # 4. 把产水器接上 StreamingResponse 水管，明确告诉浏览器这是 SSE 流！
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/sessions")
-async def get_chat_sessions():
-    """获取所有历史会话列表，包括标题与最后活动时间"""
+async def get_chat_sessions(current_user: dict = Depends(get_current_user)):
+    """获取当前用户的历史会话列表（从关系表高效拉取并实现硬隔离）"""
+    user_id = current_user["user_id"]
     try:
         pool = get_pool()
-        agent_app = get_agent_app()
-
-        # 1. 快速查询数据库中所有唯一的 thread_id 以及最新时间戳
+        sessions = []
         with pool.connection() as conn:
             with conn.cursor() as cur:
+                # 关联查询 checkpoints 最大 ts 及 agent_sessions 表，规避模糊前缀查询性能漏洞
                 cur.execute("""
-                    SELECT thread_id, MAX(checkpoint->>'ts') as latest_ts
-                    FROM public.checkpoints
-                    GROUP BY thread_id
-                    ORDER BY latest_ts DESC
+                    SELECT s.thread_id, s.title, s.created_at, MAX(c.checkpoint->>'ts') as latest_ts
+                    FROM agent_sessions s
+                    LEFT JOIN public.checkpoints c ON s.thread_id = c.thread_id
+                    WHERE s.user_id = %s
+                    GROUP BY s.thread_id, s.title, s.created_at
+                    ORDER BY COALESCE(MAX(c.checkpoint->>'ts'), s.created_at::text) DESC
                     LIMIT 50
-                """)
+                """, (user_id,))
                 rows = cur.fetchall()
 
-        sessions = []
         for row in rows:
             thread_id = row[0]
-            ts = row[1]
-            formatted_time = ts[:19].replace("T", " ") if ts else "未知时间"
-
-            # 2. 调用 aget_state 高效拉取消息标题
-            config = {"configurable": {"thread_id": thread_id}}
-            state = await agent_app.aget_state(config)
-            messages = state.values.get("messages", [])
-
-            title = ""
-            if messages:
-                # 寻找第一个 HumanMessage 提取内容
-                for msg in messages:
-                    if isinstance(msg, HumanMessage) or (
-                        hasattr(msg, "type") and msg.type == "human"
-                    ):
-                        title = str(msg.content)
-                        break
-                if not title:
-                    # 备用方案：第一条非空消息
-                    for msg in messages:
-                        if hasattr(msg, "content") and msg.content:
-                            title = str(msg.content)
-                            break
-
-            if title:
-                title = title[:20] + "..." if len(title) > 20 else title
-            else:
-                title = f"未命名会话 ({thread_id[:8]})"
+            title = row[1] or f"分析会话 ({thread_id[:8]})"
+            created_at = row[2]
+            latest_ts = row[3]
+            formatted_time = latest_ts[:19].replace("T", " ") if latest_ts else created_at.strftime("%Y-%m-%d %H:%M:%S")
 
             sessions.append(
                 {"session_id": thread_id, "title": title, "created_at": formatted_time}
@@ -242,14 +262,30 @@ async def get_chat_sessions():
         return {"status": "success", "data": sessions}
     except Exception as e:
         import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{thread_id}")
-async def get_session_history(thread_id: str):
-    """获取指定会话的完整聊天历史记录"""
+async def get_session_history(
+    thread_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """获取指定会话的完整聊天历史记录（防越权，基于关系表双重验审）"""
+    user_id = current_user["user_id"]
+    
+    # 🛡️ 安全校验：在 agent_sessions 关系表中核查此 thread_id 归属
+    pool = get_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM agent_sessions WHERE thread_id = %s", (thread_id,))
+            row = cur.fetchone()
+            if not row or row[0] != user_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="权限拒绝：不能查看不属于您名下的会话记录。"
+                )
+
     try:
         agent_app = get_agent_app()
         config = {"configurable": {"thread_id": thread_id}}
@@ -259,7 +295,6 @@ async def get_session_history(thread_id: str):
         history_list = []
         for msg in messages:
             content = getattr(msg, "content", "")
-            # 区分角色
             if isinstance(msg, HumanMessage) or (
                 hasattr(msg, "type") and msg.type == "human"
             ):
@@ -267,7 +302,6 @@ async def get_session_history(thread_id: str):
             else:
                 role = "assistant"
 
-            # 过滤掉系统内部路由标签消息，只展示有意义的内容给用户
             if content and not any(
                 tag in str(content)
                 for tag in ["<内部路由标签>", "<沙箱执行成功>", "<沙箱执行失败>"]
@@ -284,12 +318,27 @@ async def get_session_history(thread_id: str):
 
 
 @router.delete("/history/{thread_id}")
-async def delete_session_history(thread_id: str):
-    """物理删除指定 thread_id 的所有 checkpoint 记录"""
+async def delete_session_history(
+    thread_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """物理删除属于当前用户的指定会话记录（防越权，级联清理关系表）"""
+    user_id = current_user["user_id"]
+    
     try:
         pool = get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
+                # 🛡️ 安全校验：在数据库层面核验当前会话的物理所有权
+                cur.execute("SELECT user_id FROM agent_sessions WHERE thread_id = %s", (thread_id,))
+                row = cur.fetchone()
+                if not row or row[0] != user_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="权限拒绝：不能删除不属于您名下的会话记录。"
+                    )
+
+                # 1. 删除 checkpoints
                 cur.execute(
                     "DELETE FROM public.checkpoints WHERE thread_id = %s", (thread_id,)
                 )
@@ -301,9 +350,16 @@ async def delete_session_history(thread_id: str):
                     "DELETE FROM public.checkpoint_writes WHERE thread_id = %s",
                     (thread_id,),
                 )
+                # 2. 删除会话关系记录
+                cur.execute(
+                    "DELETE FROM public.agent_sessions WHERE thread_id = %s",
+                    (thread_id,),
+                )
         return {
             "status": "success",
             "message": f"会话 {thread_id} 已成功从数据库物理删除。",
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

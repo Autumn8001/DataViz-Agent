@@ -116,6 +116,24 @@ def get_checkpointer() -> AsyncPostgresSaverWrapper:
         p = get_pool()
         _sync_saver = PostgresSaver(p)
         _sync_saver.setup()
+        
+        # 建立 agent_sessions 关系表，用于硬核校验 thread_id 与用户的归属关系
+        try:
+            with p.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS agent_sessions (
+                            thread_id VARCHAR(255) PRIMARY KEY,
+                            user_id VARCHAR(255) NOT NULL,
+                            tenant_id VARCHAR(255) NOT NULL,
+                            title VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+            print(" [Database] agent_sessions 表校验与建表完成。")
+        except Exception as e:
+            print(f"⚠️ [Database] 初始化 agent_sessions 表异常: {e}")
+
         _checkpointer = AsyncPostgresSaverWrapper(_sync_saver)
     return _checkpointer
 

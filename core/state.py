@@ -15,3 +15,4 @@ class AgentState(TypedDict):
     schema_hypothesis: str  # 大模型对数据的试探性探索结果
     requires_human_approval: bool  # 是否因为数据太复杂/模糊，需要触发“人在回路”拦截
     user_summary: str  # 供用户查看的简明数据探针总结报告
+    user_id: str  # 当前会话绑定的用户 ID

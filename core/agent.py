@@ -429,6 +429,11 @@ async def coder_node(state: AgentState) -> dict:
         return {"messages": [AIMessage(content=f"读取文件失败: {str(e)}")]}
 
     schema_hypothesis = state.get("schema_hypothesis", "暂无数据探针语义映射报告。")
+    user_id = state.get("user_id", "default_user")
+
+    # 🛡️ 极其关键的安全与健壮性前置保障：动态创建当前用户的图表输出目录，防止 Matplotlib 报错
+    import os
+    os.makedirs(f"./data/outputs/{user_id}", exist_ok=True)
 
     system_prompt = f"""
     # 角色: 资深数据科学家 & 首席 Python 工程师
@@ -451,8 +456,8 @@ async def coder_node(state: AgentState) -> dict:
        - 处理缺失值：必须安全地处理可能存在的缺失值 (NaN)，使用 `.fillna()` 填充（例如填 0）、`.dropna()` 丢弃，或选择合适的聚合边界。
        - **字段映射对齐**：必须结合“数据探针分析假设与字段语义映射”对用户问题中的模糊字段名进行对齐翻译。如果用户请求中提及的字段名与实际字段列名不一致（例如用户问“销售大区”，而探针报告和实际列名显示为“区域”），则在编写代码时必须使用真实的列名（如使用 `df.groupby('区域')`），绝不允许强行使用数据集中不存在的列名。
     2. **数据可视化标准 (如果涉及绘制图表)**:
-       - 所有生成的图表图片必须保存到 `./data/outputs/` 目录下。为了防止覆盖历史对话中的图表，文件名必须是唯一的，必须导入 `uuid` 模块，并保存为类似 `f"./data/outputs/chart_{{uuid.uuid4().hex[:8]}}.png"` 的随机命名。
-       - 为了避免资源浪费和排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
+       - 所有生成的图表图片必须保存到 `./data/outputs/{user_id}/` 目录下。为了防止覆盖历史对话中的图表，文件名必须是唯一的，必须导入 `uuid` 模块，并保存为类似 `f"./data/outputs/{user_id}/chart_{{uuid.uuid4().hex[:8]}}.png"` 的随机命名。
+       - 为了避免资源浪费 and 排版混乱，除非用户明确要求，否则只生成**一张**最核心、最能直观回答用户问题的图表。
        - 使用 Matplotlib 和 Seaborn 绘图。必须配置如下中文防乱码与审美风格：
          ```python
          import matplotlib.pyplot as plt

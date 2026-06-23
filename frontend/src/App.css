@@ -1,0 +1,749 @@
+/* 🔐 统一 SSO 登录设计 */
+.auth-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+  position: relative;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 440px;
+  padding: 40px 36px;
+  text-align: center;
+  position: relative;
+  z-index: 10;
+  border-radius: 12px;
+}
+
+.auth-header h1 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.auth-header p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+.sso-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(60, 122, 90, 0.08);
+  border: 1px dashed rgba(60, 122, 90, 0.25);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 24px;
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.auth-form-group {
+  text-align: left;
+  margin-bottom: 18px;
+}
+
+.auth-form-group label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.error-toast {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(199, 90, 78, 0.08);
+  border: 1px solid rgba(199, 90, 78, 0.2);
+  border-radius: 8px;
+  color: var(--color-danger);
+  font-size: 13px;
+  text-align: left;
+}
+
+/* 🖥️ 分析大控制台布局 */
+.console-layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.4s ease;
+}
+
+/* 人在回路激活时的红晕呼吸背景效果 */
+.console-layout.hitl-active {
+  background-color: rgba(199, 90, 78, 0.02);
+  animation: hitl-pulse 3s infinite ease-in-out;
+}
+
+@keyframes hitl-pulse {
+  0% { box-shadow: inset 0 0 40px rgba(199, 90, 78, 0.03); }
+  50% { box-shadow: inset 0 0 60px rgba(199, 90, 78, 0.07); }
+  100% { box-shadow: inset 0 0 40px rgba(199, 90, 78, 0.03); }
+}
+
+/* 1. 左侧历史会话侧边栏 */
+.sidebar-panel {
+  width: 280px;
+  height: 100%;
+  border-right: 1.5px solid var(--border-glass);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 18px;
+  z-index: 20;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.sidebar-header h2 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.new-chat-btn {
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+/* 搜索框 */
+.search-box-wrapper {
+  position: relative;
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 14px 10px 34px;
+  background: #ffffff;
+  border: 1.5px solid var(--border-glass);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: var(--transition-smooth);
+}
+
+.search-input:focus {
+  border-color: var(--color-primary);
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 12.5px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 1.5px solid transparent;
+  transition: var(--transition-smooth);
+}
+
+.session-item:hover {
+  background: rgba(25, 25, 25, 0.02);
+}
+
+.session-item.active {
+  background: #ffffff;
+  border-color: var(--border-glass);
+  box-shadow: var(--shadow-neon);
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.session-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.session-item.active .session-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.session-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: var(--transition-smooth);
+}
+
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+
+.session-delete-btn:hover {
+  color: var(--color-danger);
+  background: rgba(199, 90, 78, 0.08);
+}
+
+.sidebar-user {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1.5px solid var(--border-glass);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.user-badge-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.user-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.tenant-id-badge {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logout-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  transition: var(--transition-smooth);
+}
+
+.logout-btn:hover {
+  color: var(--color-danger);
+  background: rgba(199, 90, 78, 0.08);
+}
+
+/* 2. 右侧主工作区 */
+.main-workspace {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  position: relative;
+  z-index: 10;
+  overflow-y: auto;
+}
+
+/* 隔离沙箱数据源 */
+.kb-section {
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.kb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.kb-header h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 15.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.file-active-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: rgba(255, 127, 14, 0.08);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* 拖拽区 */
+.upload-dropzone {
+  border: 1.5px dashed var(--border-glass);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(25, 25, 25, 0.005);
+  transition: var(--transition-smooth);
+  position: relative;
+}
+
+.upload-dropzone:hover, .upload-dropzone.dragging {
+  border-color: var(--color-primary);
+  background: rgba(255, 127, 14, 0.02);
+}
+
+.upload-icon {
+  color: var(--color-primary);
+  margin-bottom: 8px;
+}
+
+.upload-dropzone p {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.upload-dropzone span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.upload-progress-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(249, 246, 240, 0.95);
+  backdrop-filter: blur(2px);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.progress-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(25, 25, 25, 0.05);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.progress-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* 3. 对话与渲染区 */
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 0;
+  position: relative;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 10px 4px;
+  margin-bottom: 16px;
+}
+
+.empty-chat-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 40px 20px;
+}
+
+.empty-chat-state h2 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 24px;
+  margin-top: 14px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.empty-chat-state p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  max-width: 300px;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: 600px;
+}
+
+.feature-item {
+  background: #ffffff;
+  border: 1px solid var(--border-glass);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feature-item strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.feature-item span {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* 消息对话气泡 */
+.message-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.message-row.user {
+  align-items: flex-end;
+}
+
+.message-row.assistant {
+  align-items: flex-start;
+}
+
+.message-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--color-primary);
+  background: rgba(255, 127, 14, 0.06);
+  padding: 1px 6px;
+  border-radius: 10px;
+  animation: pulse-border 1.5s infinite alternate;
+}
+
+@keyframes pulse-border {
+  from { opacity: 0.8; }
+  to { opacity: 1; }
+}
+
+.chat-bubble {
+  max-width: 85%;
+  padding: 16px 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  position: relative;
+}
+
+.chat-bubble.user {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-bottom-right-radius: 2px;
+}
+
+.chat-bubble.assistant {
+  background: #ffffff;
+  border: 1.5px solid var(--border-glass);
+  border-bottom-left-radius: 2px;
+  box-shadow: var(--shadow-glass);
+}
+
+/* Markdown 图片渲染尺寸限定 (恢复用户以前的图表尺寸大小) */
+.markdown-render img {
+  max-width: 720px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-glass);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+  display: block;
+  margin: 16px auto;
+}
+
+/* 🔍 数据探针折叠卡片 */
+.profiler-card {
+  background: rgba(46, 96, 75, 0.01);
+  border: 1px solid rgba(46, 96, 75, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.profiler-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-bottom: 8px;
+}
+
+.profiler-details summary {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+  padding: 2px 0;
+}
+
+.profiler-body {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: #fafafa;
+  border: 1.5px solid var(--border-glass);
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* ⚡ 脉冲链路追踪日志 (Trace Timeline) */
+.trace-timeline-container {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-glass);
+}
+
+.trace-timeline-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.trace-pulse-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  padding-left: 10px;
+}
+
+.trace-pulse-list::before {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border-glass);
+}
+
+.trace-pulse-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  margin-top: 4.5px;
+  z-index: 10;
+  transition: var(--transition-smooth);
+}
+
+/* 状态样式 */
+.trace-pulse-item.start .pulse-dot {
+  background: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(255, 127, 14, 0.2);
+  animation: pulse-ring 1s infinite alternate;
+}
+
+@keyframes pulse-ring {
+  from { transform: scale(0.9); }
+  to { transform: scale(1.1); }
+}
+
+.trace-pulse-item.end .pulse-dot {
+  background: var(--color-success);
+}
+
+.trace-pulse-item.error .pulse-dot {
+  background: var(--color-danger);
+}
+
+.pulse-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.node-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: rgba(46, 96, 117, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.duration-tag {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+/* 🙋 人在回路 (HITL) 遮罩层 */
+.hitl-alert-overlay {
+  background: rgba(249, 246, 240, 0.7);
+  backdrop-filter: blur(4px);
+  border: 1.5px solid rgba(199, 90, 78, 0.15);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+  animation: slide-down 0.3s ease-out;
+}
+
+.hitl-alert-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hitl-alert-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hitl-alert-card h4 {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-danger);
+}
+
+.hitl-alert-card p {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.hitl-alert-card code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: rgba(199, 90, 78, 0.05);
+  color: var(--color-danger);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* 底部输入框 */
+.chat-input-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: #ffffff;
+  border: 1.5px solid var(--border-glass);
+  border-radius: 12px;
+  box-shadow: var(--shadow-glass);
+}
+
+.chat-input-bar .neon-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+}
+
+.chat-input-bar .neon-input:focus {
+  box-shadow: none;
+  background: transparent;
+}
