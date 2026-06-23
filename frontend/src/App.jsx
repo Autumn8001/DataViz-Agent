@@ -573,15 +573,24 @@ function App() {
                 <p>上传隔离数据源文件后，请输入您的绘图与分析请求。</p>
                 <div className="feature-grid">
                   <div className="feature-item">
-                    <strong>🔍 字段智能探针</strong>
+                    <strong>
+                      <Database size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: 'var(--color-primary)' }} />
+                      字段智能探针
+                    </strong>
                     <span>分析前自动梳理特征与缺失值</span>
                   </div>
                   <div className="feature-item">
-                    <strong>💻 动态沙箱执行</strong>
+                    <strong>
+                      <Code size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: 'var(--color-primary)' }} />
+                      动态沙箱执行
+                    </strong>
                     <span>生成并运行 Python 代码进行绘图</span>
                   </div>
                   <div className="feature-item">
-                    <strong>🙋 人在回路联动</strong>
+                    <strong>
+                      <User size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: 'var(--color-primary)' }} />
+                      人在回路联动
+                    </strong>
                     <span>在关键点挂起并等候您纠偏</span>
                   </div>
                 </div>
